@@ -2,9 +2,8 @@ name: Bet Engine Daily Analysis
 
 on:
   schedule:
-    # Gira ogni giorno alle 08:00 UTC (09:00 o 10:00 in Italia a seconda dell'ora legale)
     - cron: '0 8 * * *'
-  workflow_dispatch: # Ti permette di farlo partire a mano quando vuoi tu per testare
+  workflow_dispatch:
 
 jobs:
   build:
@@ -21,7 +20,7 @@ jobs:
       - name: Installazione dipendenze
         run: |
           python -m pip install --upgrade pip
-          pip install numpy requests scipy supabase
+          pip install numpy requests scipy supabase thefuzz python-Levenshtein
 
       - name: Esecuzione Analisi
         env:
