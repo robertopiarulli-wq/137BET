@@ -5,17 +5,23 @@ import requests
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# 🔹 Funzione robusta per estrazione nomi squadre
+# 🔹 Estrazione nomi squadre robusta
 def get_match_teams(match):
-    if 'teams' in match:
+    if 'teams' in match and len(match['teams']) >= 2:
         return match['teams'][0], match['teams'][1]
     if 'home_team' in match and 'away_team' in match:
         return match['home_team'], match['away_team']
     try:
-        outcomes = match['bookmakers'][0]['markets'][0]['outcomes']
-        return outcomes[0]['name'], outcomes[1]['name']
+        # Estrai dal primo bookmaker h2h
+        markets = match['bookmakers'][0]['markets']
+        h2h = next(m for m in markets if m['key'] == 'h2h')
+        outcomes = h2h['outcomes']
+        teams = [o['name'] for o in outcomes if o['name'].lower() != 'draw']
+        if len(teams) >= 2:
+            return teams[0], teams[1]
     except:
-        return "Team1", "Team2"
+        pass
+    return "Team1", "Team2"
 
 def send_telegram_message(value_bets, top_combos):
     msg = ""
