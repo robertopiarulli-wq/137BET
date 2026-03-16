@@ -25,6 +25,7 @@ def send_telegram_message(value_bets, top_combos):
                 suggested = "Home" if evs[0] > evs[2] else "Away"
 
             msg += f"🟢 {m['home_name']} vs {m['away_name']} ➡ {suggested}\n"
+            msg += f"Data/Ora: {m.get('commence_time', 'N/A')}\n"
             msg += f"Quote: {m['odds']}\n"
             msg += f"EV: {[round(e,2) for e in evs]} | α: {round(m['instability'],4)}\n\n"
 
@@ -42,7 +43,7 @@ def send_telegram_message(value_bets, top_combos):
             if suggested == "Draw" and (abs(evs[0]-evs[1])<0.05 or abs(evs[2]-evs[1])<0.05):
                 suggested = "Home" if evs[0] > evs[2] else "Away"
 
-            combo_text += f"{c['home_name']} vs {c['away_name']} ➡ {suggested} (EV: {round(evs[max_index],2)}) + "
+            combo_text += f"{c['home_name']} vs {c['away_name']} ({c.get('commence_time','N/A')}) ➡ {suggested} (EV: {round(evs[max_index],2)}) + "
 
         combo_text = combo_text.rstrip(" + ")
         msg += f"{i}: {combo_text} | EV combinato: {round(combo_dict['ev_combined'],2)}\n"
