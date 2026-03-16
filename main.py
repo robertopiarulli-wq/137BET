@@ -1,7 +1,7 @@
 # main.py
 from odds_api import get_all_matches
 from quantum_model import calculate_quantum_probabilities
-from telegram_bot import send_telegram_message, get_match_teams
+from telegram_bot import send_telegram_message, extract_match_info
 from itertools import combinations
 from datetime import datetime, timezone
 from math import prod
@@ -33,12 +33,19 @@ def main():
 
     # 🔹 Calcolo probabilità quantistiche, EV e instabilità
     for m in matches_today:
+        home_name, away_name, odds = extract_match_info(m)
+        m['home_name'] = home_name
+        m['away_name'] = away_name
+        m['odds'] = odds
+
         probs = calculate_quantum_probabilities(m)
         m['quantum_probs'] = probs
-        evs = [probs[i] * m['odds'][i] for i in range(3)]
+
+        evs = [probs[i] * odds[i] for i in range(3)]
         m['evs'] = evs
         m['expected_value'] = max(evs)
         m['instability'] = abs(probs[0] - probs[2]) * alpha
+
         all_matches.append(m)
 
         # 🔹 Singole Value Bet
