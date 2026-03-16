@@ -24,7 +24,7 @@ def send_telegram_msg(message):
     print(f"DEBUG: Risposta Telegram Status Code: {response.status_code}")
 
 def fetch_and_populate_matches():
-    """Scarica quote e popola la tabella matches."""
+    """Scarica quote e popola la tabella matches con i nomi delle squadre."""
     api_key = os.environ.get("ODDS_API_KEY")
     url = f"https://api.the-odds-api.com/v4/sports/soccer_italy_serie_a/odds/?apiKey={api_key}&regions=eu&markets=h2h"
     response = requests.get(url)
@@ -33,48 +33,49 @@ def fetch_and_populate_matches():
         matches = response.json()
         print(f"DEBUG: Recuperati {len(matches)} match da API.")
         for m in matches:
-            # Salva in Supabase
+            # Inseriamo i dati basandoci sulle nuove colonne 'home_team_name' e 'away_team_name'
             supabase.table("matches").insert({
-                "home_team_id": m['home_team'],
-                "away_team_id": m['away_team'],
+                "home_team_name": m['home_team'],
+                "away_team_name": m['away_team'],
                 "status": "scheduled",
                 "league": "Serie A"
             }).execute()
+        print("DEBUG: Database popolato con successo.")
     else:
         print(f"DEBUG: Errore API Odds: {response.status_code}")
 
 def run_analysis():
     print("DEBUG: Avvio procedura...")
     
-    # 1. Popolamento automatico
+    # 1. Pulizia tabella prima di nuovi inserimenti (opzionale, evita duplicati)
+    supabase.table("matches").delete().neq("id", 0).execute()
+    
+    # 2. Popolamento automatico
     fetch_and_populate_matches()
     
-    # 2. Recupero Dati
+    # 3. Recupero Dati
     matches = supabase.table("matches").select("*").eq("status", "scheduled").execute().data
+    
+    # Nota: Assicurati che 'view_team_stats' sia ricostruita coerentemente con i nomi squadra
     stats = supabase.table("view_team_stats").select("*").execute().data
+    stats_map = {s['team_name']: s for s in stats} # Mappiamo per nome, non più ID
     
-    stats_map = {s['team_id']: s for s in stats}
     picks = []
-    
     for m in matches:
-        s_home = stats_map.get(m['home_team_id'])
-        s_away = stats_map.get(m['away_team_id'])
+        s_home = stats_map.get(m['home_team_name'])
+        s_away = stats_map.get(m['away_team_name'])
         
         if s_home and s_away:
             p_home, _, _ = get_poisson_probs(s_home['avg_scored'], s_home['avg_conceded'], 
                                              s_away['avg_scored'], s_away['avg_conceded'], 1.5, 1.2)
             
-            # Assumiamo che le quote siano in una tabella 'odds' collegata
-            # Qui il bot filtra le partite
-            edge = p_home - 0.50 # Sostituisci 0.50 con la probabilità del bookmaker
-            
+            edge = p_home - 0.50 
             if edge > ALPHA:
-                picks.append({'match': f"{m['home_team_id']} vs {m['away_team_id']}", 'p_win': p_home})
+                picks.append({'match': f"{m['home_team_name']} vs {m['away_team_name']}", 'p_win': p_home})
 
-    # 3. Output
-    combos = [c for c in combinations(picks, 3)]
-    if combos:
-        msg = "🚀 *Bet Engine: Analisi Completata*\n" + "\n".join([c[0]['match'] for c in combos[:3]])
+    # 4. Output
+    if picks:
+        msg = "🚀 *Bet Engine: Analisi Completata*\n" + "\n".join([p['match'] for p in picks[:3]])
         send_telegram_msg(msg)
     else:
         print("DEBUG: Nessuna combinazione valida.")
