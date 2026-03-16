@@ -7,7 +7,7 @@ from itertools import combinations
 
 # Setup Connessioni
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
-ALPHA = 0.0073  # La tua costante di filtraggio
+ALPHA = 0.0073 
 
 def get_poisson_probs(att_h, def_h, att_a, def_a, avg_h, avg_a):
     lam_h = att_h * def_a * avg_h
@@ -23,19 +23,39 @@ def send_telegram_msg(message):
     response = requests.post(url, data=payload)
     print(f"DEBUG: Risposta Telegram Status Code: {response.status_code}")
 
+def fetch_and_populate_matches():
+    """Scarica quote e popola la tabella matches."""
+    api_key = os.environ.get("ODDS_API_KEY")
+    url = f"https://api.the-odds-api.com/v4/sports/soccer_italy_serie_a/odds/?apiKey={api_key}&regions=eu&markets=h2h"
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        matches = response.json()
+        print(f"DEBUG: Recuperati {len(matches)} match da API.")
+        for m in matches:
+            # Salva in Supabase
+            supabase.table("matches").insert({
+                "home_team_id": m['home_team'],
+                "away_team_id": m['away_team'],
+                "status": "scheduled",
+                "league": "Serie A"
+            }).execute()
+    else:
+        print(f"DEBUG: Errore API Odds: {response.status_code}")
+
 def run_analysis():
-    print("DEBUG: Avvio analisi...")
+    print("DEBUG: Avvio procedura...")
     
-    # 1. Recupero Dati
+    # 1. Popolamento automatico
+    fetch_and_populate_matches()
+    
+    # 2. Recupero Dati
     matches = supabase.table("matches").select("*").eq("status", "scheduled").execute().data
-    print(f"DEBUG: Trovate {len(matches)} partite programmate.")
-    
     stats = supabase.table("view_team_stats").select("*").execute().data
-    print(f"DEBUG: Recuperate {len(stats)} righe di statistiche.")
     
     stats_map = {s['team_id']: s for s in stats}
-    
     picks = []
+    
     for m in matches:
         s_home = stats_map.get(m['home_team_id'])
         s_away = stats_map.get(m['away_team_id'])
@@ -44,32 +64,21 @@ def run_analysis():
             p_home, _, _ = get_poisson_probs(s_home['avg_scored'], s_home['avg_conceded'], 
                                              s_away['avg_scored'], s_away['avg_conceded'], 1.5, 1.2)
             
-            book_p_home = 1 / m['odd_home']
-            edge = p_home - book_p_home
-            
-            print(f"DEBUG: Analisi {m['home_team_id']} vs {m['away_team_id']} | Edge: {edge:.4f}")
+            # Assumiamo che le quote siano in una tabella 'odds' collegata
+            # Qui il bot filtra le partite
+            edge = p_home - 0.50 # Sostituisci 0.50 con la probabilità del bookmaker
             
             if edge > ALPHA:
-                picks.append({'match': f"{m['home_team_id']} vs {m['away_team_id']}", 
-                              'p_win': p_home, 'league': m['league']})
-    
-    print(f"DEBUG: Totale pick trovati dopo filtro Alfa: {len(picks)}")
+                picks.append({'match': f"{m['home_team_id']} vs {m['away_team_id']}", 'p_win': p_home})
 
-    # 3. Generazione Combinazioni Coerenti
-    combos = [c for c in combinations(picks, 3) if len({p['league'] for p in c}) == 3]
-    
+    # 3. Output
+    combos = [c for c in combinations(picks, 3)]
     if combos:
-        print(f"DEBUG: Trovate {len(combos)} combinazioni valide.")
-        msg = "🚀 *Bet Engine: Analisi Completata*\n\n"
-        for i, c in enumerate(combos[:3]):
-            prob_tot = np.prod([p['p_win'] for p in c])
-            msg += f"Combo {i+1} (P: {prob_tot:.2%}):\n"
-            for item in c: msg += f"- {item['match']}\n"
-            msg += "\n"
+        msg = "🚀 *Bet Engine: Analisi Completata*\n" + "\n".join([c[0]['match'] for c in combos[:3]])
         send_telegram_msg(msg)
     else:
-        print("DEBUG: Nessuna combinazione soddisfa il filtro Alfa.")
-        send_telegram_msg("⚠️ Nessuna combinazione valida trovata oggi (filtro Alfa attivo).")
+        print("DEBUG: Nessuna combinazione valida.")
+        send_telegram_msg("⚠️ Analisi completata: nessuna combinazione soddisfa il filtro Alfa.")
 
 if __name__ == "__main__":
     run_analysis()
