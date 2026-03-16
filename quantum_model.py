@@ -1,5 +1,3 @@
-# quantum_model.py
-
 def evolve_state(state, market_move, draw_factor, strength):
     alpha = 1 / 137
     new_state = [s*(1+alpha*market_move) for s in state]
