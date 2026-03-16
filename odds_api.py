@@ -13,11 +13,21 @@ def get_matches():
         "markets": "h2h"
     }
 
-    response = requests.get(url, params=params).json()
+    response = requests.get(url, params=params)
+
+    data = response.json()
+
+    # stampa debug per GitHub logs
+    print("API RESPONSE:", data)
+
+    # se non è lista → errore API
+    if not isinstance(data, list):
+        print("Errore API:", data)
+        return []
 
     matches = []
 
-    for game in response:
+    for game in data:
 
         teams = game["teams"]
         home = game["home_team"]
@@ -30,7 +40,7 @@ def get_matches():
         for o in odds:
             odds_map[o["name"]] = o["price"]
 
-        if len(odds_map) == 2:
+        if len(odds_map) < 3:
             continue
 
         matches.append({
@@ -41,5 +51,7 @@ def get_matches():
                 odds_map.get(teams[1] if teams[0]==home else teams[0])
             ]
         })
+
+    print("MATCHES FOUND:", len(matches))
 
     return matches
