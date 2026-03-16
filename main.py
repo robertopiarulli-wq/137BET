@@ -1,35 +1,36 @@
-from odds_api import get_matches
+# main.py
+from odds_api import get_all_matches
 from quantum_model import calculate_quantum_probabilities
-from value_bet import find_value
-from telegram_bot import send_message
+from telegram_bot import send_telegram_message
 
-matches = get_matches()
+def main():
+    print("START BOT")
 
-print("Partite trovate:", len(matches))
+    # 1. Prende tutte le partite dai 5 campionati
+    matches = get_all_matches()
+    print(f"MATCHES FOUND: {len(matches)}")
 
-value_matches = []
+    value_bets = []
 
-for m in matches:
+    # 2. Calcola probabilità quantistiche
+    for m in matches:
+        probs = calculate_quantum_probabilities(m)
+        m['quantum_probs'] = probs
 
-    probs = calculate_quantum_probabilities(m)
+        # semplice expected value
+        odds = m['odds']
+        ev_home = probs[0] * odds[0]
+        ev_draw = probs[1] * odds[1]
+        ev_away = probs[2] * odds[2]
 
-    is_value, idx, score = find_value(probs, m["odds"])
+        if max(ev_home, ev_draw, ev_away) > 1.0:  # soglia test
+            value_bets.append(m)
 
-    if is_value:
+    print(f"Partite trovate: {len(matches)}")
+    print(f"Value bet trovate: {len(value_bets)}")
 
-        value_matches.append({
-            "match": m["match"],
-            "outcome": ["1","X","2"][idx],
-            "value": score
-        })
+    # 3. Invia Telegram
+    send_telegram_message(value_bets)
 
-print("Value bet trovate:", len(value_matches))
-
-msg = "📊 VALUE BET DEL GIORNO\n\n"
-
-for v in value_matches:
-
-    msg += f"{v['match']} → {v['outcome']} (value {v['value']:.2f})\n"
-
-if value_matches:
-    send_message(msg)
+if __name__ == "__main__":
+    main()
