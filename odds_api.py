@@ -1,41 +1,39 @@
-import os
+# odds_api.py
 import requests
+import os
 
 API_KEY = os.environ.get("ODDS_API_KEY")
-LEAGUES = [
-    "soccer_epl",
-    "soccer_italy_serie_a",
-    "soccer_spain_la_liga",
-    "soccer_germany_bundesliga",
-    "soccer_france_ligue_one"
-]
+BASE_URL = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds/"
 
 def get_all_matches():
-    matches = []
-    for league in LEAGUES:
-        url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
-        params = {"apiKey": API_KEY, "regions": "eu", "markets": "h2h"}
-        resp = requests.get(url, params=params).json()
+    params = {
+        "apiKey": API_KEY,
+        "regions": "eu",
+        "markets": "h2h"
+    }
+    response = requests.get(BASE_URL, params=params)
+    if response.status_code != 200:
+        print("Errore API:", response.json())
+        return []
+    return response.json()
 
-        if not isinstance(resp, list):
-            print(f"Errore API {league}: {resp}")
-            continue
-
-        for g in resp:
-            home = g['home_team']
-            away = g['away_team']
-            bookmakers = g.get('bookmakers', [])
-            if not bookmakers:
-                continue
-            market = bookmakers[0]['markets'][0]['outcomes']
-            odds_map = {o['name']: o['price'] for o in market}
-
-            if home not in odds_map or away not in odds_map or "Draw" not in odds_map:
-                continue
-
-            matches.append({
-                "league": league,
-                "match": f"{home} vs {away}",
-                "odds": [odds_map[home], odds_map["Draw"], odds_map[away]]
-            })
-    return matches
+def extract_match_info(match):
+    """Estrae nomi squadre e quote EV dal primo bookmaker"""
+    try:
+        bookmakers = match.get('bookmakers', [])
+        if not bookmakers:
+            return "Team1", "Team2", [1,1,1]
+        markets = bookmakers[0].get('markets', [])
+        h2h_market = next((m for m in markets if m['key'] == 'h2h'), None)
+        if not h2h_market:
+            return "Team1", "Team2", [1,1,1]
+        outcomes = h2h_market.get('outcomes', [])
+        # ordina: [home, draw, away]
+        home_name = outcomes[0]['name'] if outcomes[0]['name'].lower() != 'draw' else outcomes[1]['name']
+        away_name = outcomes[1]['name'] if outcomes[1]['name'].lower() != 'draw' else outcomes[2]['name']
+        home_price = next(o['price'] for o in outcomes if o['name'] == home_name)
+        away_price = next(o['price'] for o in outcomes if o['name'] == away_name)
+        draw_price = next((o['price'] for o in outcomes if o['name'].lower() == 'draw'), 1)
+        return home_name, away_name, [home_price, draw_price, away_price]
+    except:
+        return "Team1", "Team2", [1,1,1]
