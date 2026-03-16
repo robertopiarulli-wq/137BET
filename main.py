@@ -1,13 +1,13 @@
 # main.py
 from odds_api import get_all_matches
 from quantum_model import calculate_quantum_probabilities
-from telegram_bot import send_telegram_message
+from telegram_bot import send_telegram_message, get_match_teams
 from itertools import combinations
 from datetime import datetime, timezone
 from math import prod
 
-INSTABILITY_THRESHOLD = 0.005  # α minima per evidenziazione
-EV_THRESHOLD = 0.99            # soglia Value Bet singole
+EV_THRESHOLD = 0.99  # soglia Value Bet singole
+alpha = 1 / 137      # instabilità
 
 def main():
     print("START BOT")
@@ -31,8 +31,6 @@ def main():
     value_bets = []
     all_matches = []
 
-    alpha = 1 / 137  # instabilità
-
     # 🔹 Calcolo probabilità quantistiche, EV e instabilità
     for m in matches_today:
         probs = calculate_quantum_probabilities(m)
@@ -53,7 +51,6 @@ def main():
     all_combos = []
     for r in [2,3]:
         for combo in combinations(all_matches, r):
-            # Calcola EV combinato
             ev_combo = prod([m['expected_value'] for m in combo])
             all_combos.append({'matches': combo, 'ev_combined': ev_combo})
 
