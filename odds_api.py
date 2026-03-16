@@ -14,41 +14,40 @@ def get_matches():
     }
 
     response = requests.get(url, params=params)
-
     data = response.json()
 
-    # stampa debug per GitHub logs
     print("API RESPONSE:", data)
-
-    # se non è lista → errore API
-    if not isinstance(data, list):
-        print("Errore API:", data)
-        return []
 
     matches = []
 
+    if not isinstance(data, list):
+        print("Errore API:", data)
+        return matches
+
     for game in data:
 
-        teams = game["teams"]
         home = game["home_team"]
+        away = game["away_team"]
 
-        bookmaker = game["bookmakers"][0]
-        odds = bookmaker["markets"][0]["outcomes"]
+        bookmakers = game.get("bookmakers", [])
+        if not bookmakers:
+            continue
+
+        market = bookmakers[0]["markets"][0]["outcomes"]
 
         odds_map = {}
-
-        for o in odds:
+        for o in market:
             odds_map[o["name"]] = o["price"]
 
-        if len(odds_map) < 3:
+        if home not in odds_map or away not in odds_map or "Draw" not in odds_map:
             continue
 
         matches.append({
-            "match": f"{teams[0]} vs {teams[1]}",
+            "match": f"{home} vs {away}",
             "odds": [
-                odds_map.get(home),
-                odds_map.get("Draw"),
-                odds_map.get(teams[1] if teams[0]==home else teams[0])
+                odds_map[home],
+                odds_map["Draw"],
+                odds_map[away]
             ]
         })
 
