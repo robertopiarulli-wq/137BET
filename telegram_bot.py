@@ -1,14 +1,18 @@
+# telegram_bot.py
 import os
 import requests
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-def send_message(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"})
+def send_telegram_message(value_bets):
+    if not value_bets:
+        msg = "Nessuna value bet oggi 🚫"
+    else:
+        msg = "💰 Value Bet Oggi:\n"
+        for m in value_bets[:10]:  # top 10
+            probs = m['quantum_probs']
+            msg += f"{m['match']} | Odds: {m['odds']} | Probs: {[round(p,2) for p in probs]}\n"
 
-def send_photo(image_path):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-    with open(image_path, 'rb') as img:
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID}, files={"photo": img})
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
