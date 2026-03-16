@@ -4,6 +4,7 @@ from quantum_model import calculate_quantum_probabilities
 from telegram_bot import send_telegram_message
 from itertools import combinations
 from math import prod
+from datetime import datetime, timezone
 
 EV_THRESHOLD = 0.99  # soglia Value Bet singole
 ALPHA = 1 / 137      # instabilità quantistica
@@ -17,8 +18,16 @@ def main():
     all_matches = []
     value_bets = []
 
-    # 🔹 Calcolo probabilità e EV per tutte le partite (senza filtro data)
+    # 🔹 Filtra solo partite future con commence_time valido
+    future_matches = []
     for m in matches:
+        if 'commence_time' in m:
+            match_time = datetime.fromisoformat(m['commence_time'].replace('Z','+00:00'))
+            if match_time >= datetime.now(timezone.utc):
+                future_matches.append(m)
+
+    # 🔹 Calcolo probabilità e EV per tutte le partite future
+    for m in future_matches:
         home_name, away_name, odds = extract_match_info(m)
         m['home_name'] = home_name
         m['away_name'] = away_name
