@@ -1,14 +1,14 @@
 import os
 import numpy as np
 import requests
-import time # Aggiunto per gestire il limite di velocità API
+import time
 from scipy.stats import poisson
 from supabase import create_client
 
-# Setup Connessioni
+# Setup
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
-ALPHA = 0.0073 
 
+# Proviamo a usare solo i codici principali supportati dal piano gratuito
 LEAGUES = {
     'SA': 'soccer_italy_serie_a',
     'PL': 'soccer_epl',
@@ -31,46 +31,49 @@ def send_telegram_msg(message):
     requests.post(url, data=payload)
 
 def update_stats_from_api():
-    """Aggiorna le statistiche gestendo i limiti di velocità (Rate Limit)."""
+    """Aggiorna le statistiche con log di errore esteso."""
     headers = {"X-Auth-Token": os.environ.get("FOOTBALL_DATA_API_KEY")}
     mapping = {
         "FC Internazionale Milano": "Inter Milan", "Juventus FC": "Juventus",
         "FC Bayern München": "Bayern Munich", "Real Madrid CF": "Real Madrid",
         "Paris Saint-Germain FC": "Paris Saint Germain", "Manchester City FC": "Manchester City",
-        "Arsenal FC": "Arsenal", "Bayer 04 Leverkusen": "Bayer Leverkusen",
-        "Borussia Dortmund": "Borussia Dortmund", "FC Barcelona": "Barcelona"
+        "Arsenal FC": "Arsenal", "Bayer 04 Leverkusen": "Bayer Leverkusen"
     }
 
     for code in LEAGUES.keys():
-        print(f"DEBUG: Recupero classifica per {code}...")
+        print(f"--- DEBUG: Analisi Campionato {code} ---")
         url = f"https://api.football-data.org/v4/competitions/{code}/standings"
-        response = requests.get(url, headers=headers)
         
-        if response.status_code == 200:
-            data = response.json()
-            # Verifichiamo che i dati esistano
-            if 'standings' in data and len(data['standings']) > 0:
-                for team_info in data['standings'][0]['table']:
-                    raw_name = team_info['team']['name']
-                    name = mapping.get(raw_name, raw_name)
-                    played = team_info['playedGames']
-                    if played > 0:
-                        scored = team_info['goalsFor'] / played
-                        conceded = team_info['goalsAgainst'] / played
-                        supabase.table("teams").upsert({
-                            "team_name": name, "avg_scored": round(scored, 2), "avg_conceded": round(conceded, 2)
-                        }, on_conflict="team_name").execute()
-                print(f"DEBUG: Statistiche {code} caricate in Supabase.")
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                if 'standings' in data and len(data['standings']) > 0:
+                    for team_info in data['standings'][0]['table']:
+                        raw_name = team_info['team']['name']
+                        name = mapping.get(raw_name, raw_name)
+                        played = team_info['playedGames']
+                        if played > 0:
+                            scored = team_info['goalsFor'] / played
+                            conceded = team_info['goalsAgainst'] / played
+                            supabase.table("teams").upsert({
+                                "team_name": name, "avg_scored": round(scored, 2), "avg_conceded": round(conceded, 2)
+                            }, on_conflict="team_name").execute()
+                    print(f"SUCCESS: Statistiche {code} caricate.")
+                else:
+                    print(f"WARNING: Formato dati inaspettato per {code}.")
             else:
-                print(f"DEBUG: Formato dati non valido per {code}")
-        else:
-            print(f"DEBUG: Errore API Football-Data ({code}): {response.status_code}")
+                # QUESTA RIGA CI DIRÀ PERCHÉ RICEVI 400
+                print(f"ERROR API {code}: Status {response.status_code}")
+                print(f"DETTAGLIO ERRORE: {response.text}")
         
-        # Aspetta 2 secondi tra una lega e l'altra per non farti bannare dal piano free
-        time.sleep(2)
+        except Exception as e:
+            print(f"EXCEPTION: {e}")
+        
+        # Il piano gratuito ha limiti stretti (10 chiamate/min), mettiamo 6 secondi tra una lega e l'altra
+        time.sleep(6)
 
 def fetch_and_populate_matches():
-    """Scarica match da The Odds API."""
     api_key = os.environ.get("ODDS_API_KEY")
     supabase.table("matches").delete().neq("id", 0).execute()
     
@@ -85,7 +88,7 @@ def fetch_and_populate_matches():
                     "match_date": m['commence_time'], "status": "scheduled", "league": code
                 }).execute()
             print(f"DEBUG: Match {code} inseriti.")
-        time.sleep(1) # Piccolo delay anche qui
+        time.sleep(1)
 
 def run_analysis():
     print("DEBUG: Avvio Analisi Big 5...")
@@ -96,7 +99,7 @@ def run_analysis():
     stats = supabase.table("teams").select("*").execute().data
     stats_map = {s['team_name']: s for s in stats}
     
-    print(f"DEBUG: Totale squadre caricate in stats_map: {len(stats_map)}")
+    print(f"DEBUG: Totale squadre nel database: {len(stats_map)}")
     
     picks = []
     for m in matches:
@@ -106,13 +109,13 @@ def run_analysis():
         if s_home and s_away:
             p_home, _, _ = get_poisson_probs(s_home['avg_scored'], s_home['avg_conceded'], 
                                              s_away['avg_scored'], s_away['avg_conceded'], 1.5, 1.2)
-            if p_home > 0.52: # Soglia test
+            if p_home > 0.52:
                 picks.append(f"[{m['league']}] {m['home_team_name']} vs {m['away_team_name']} (P: {round(p_home, 2)})")
 
     if picks:
         send_telegram_msg("🌍 *Analisi Big 5 Europei*\n\n" + "\n".join(picks[:10]))
     else:
-        send_telegram_msg("⚠️ Analisi completata: nessun match soddisfa i parametri oggi.")
+        send_telegram_msg("⚠️ Nessun match soddisfa i parametri oggi.")
 
 if __name__ == "__main__":
     run_analysis()
