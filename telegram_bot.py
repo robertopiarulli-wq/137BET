@@ -24,7 +24,10 @@ def send_telegram_message(value_bets, top_combos):
             if suggested == "Draw" and (abs(evs[0]-evs[1])<0.05 or abs(evs[2]-evs[1])<0.05):
                 suggested = "Home" if evs[0] > evs[2] else "Away"
 
-            msg += f"🟢 {m['home_team']} vs {m['away_team']} ➡ {suggested}\n"
+            home = m['teams'][0] if 'teams' in m else "Team1"
+            away = m['teams'][1] if 'teams' in m else "Team2"
+
+            msg += f"🟢 {home} vs {away} ➡ {suggested}\n"
             msg += f"Quote: {m['odds']}\n"
             msg += f"EV: {[round(e,2) for e in evs]} | α: {round(m['instability'],4)}\n\n"
 
@@ -42,7 +45,10 @@ def send_telegram_message(value_bets, top_combos):
             if suggested == "Draw" and (abs(evs[0]-evs[1])<0.05 or abs(evs[2]-evs[1])<0.05):
                 suggested = "Home" if evs[0] > evs[2] else "Away"
 
-            combo_text += f"{c['home_team']} vs {c['away_team']} ➡ {suggested} (EV: {round(evs[max_index],2)}) + "
+            home = c['teams'][0] if 'teams' in c else "Team1"
+            away = c['teams'][1] if 'teams' in c else "Team2"
+
+            combo_text += f"{home} vs {away} ➡ {suggested} (EV: {round(evs[max_index],2)}) + "
 
         combo_text = combo_text.rstrip(" + ")
         msg += f"{i}: {combo_text} | EV combinato: {round(combo_dict['ev_combined'],2)}\n"
