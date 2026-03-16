@@ -1,10 +1,7 @@
-# odds_api.py
 import os
 import requests
 
 API_KEY = os.environ.get("ODDS_API_KEY")
-
-# principali 5 campionati
 LEAGUES = [
     "soccer_epl",
     "soccer_italy_serie_a",
@@ -27,11 +24,9 @@ def get_all_matches():
         for g in resp:
             home = g['home_team']
             away = g['away_team']
-
             bookmakers = g.get('bookmakers', [])
             if not bookmakers:
                 continue
-
             market = bookmakers[0]['markets'][0]['outcomes']
             odds_map = {o['name']: o['price'] for o in market}
 
