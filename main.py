@@ -3,7 +3,6 @@ from odds_api import get_all_matches, extract_match_info
 from quantum_model import calculate_quantum_probabilities
 from telegram_bot import send_telegram_message
 from itertools import combinations
-from datetime import datetime, timezone
 from math import prod
 
 EV_THRESHOLD = 0.99  # soglia Value Bet singole
@@ -15,24 +14,11 @@ def main():
     # 🔹 Prende tutte le partite disponibili dall'API
     matches = get_all_matches()
 
-    # 🔹 Filtra solo partite della giornata
-    today = datetime.now(timezone.utc).date()
-    matches_today = []
-    for m in matches:
-        if 'commence_time' in m:
-            match_time = datetime.fromisoformat(m['commence_time'].replace('Z','+00:00')).date()
-            if match_time == today:
-                matches_today.append(m)
-        else:
-            matches_today.append(m)
-
-    print(f"MATCHES FOUND TODAY: {len(matches_today)}")
-
-    value_bets = []
     all_matches = []
+    value_bets = []
 
-    # 🔹 Calcolo probabilità quantistiche, EV e instabilità
-    for m in matches_today:
+    # 🔹 Calcolo probabilità e EV per tutte le partite (senza filtro data)
+    for m in matches:
         home_name, away_name, odds = extract_match_info(m)
         m['home_name'] = home_name
         m['away_name'] = away_name
@@ -44,24 +30,25 @@ def main():
         evs = [probs[i] * odds[i] for i in range(3)]
         m['evs'] = evs
         m['expected_value'] = max(evs)
-        m['instability'] = abs(probs[0] - probs[2]) * ALPHA
+        m['instability'] = abs(probs[0]-probs[2]) * ALPHA
 
         all_matches.append(m)
 
-        # 🔹 Singole Value Bet
         if m['expected_value'] >= EV_THRESHOLD:
             value_bets.append(m)
 
+    print(f"MATCHES FOUND: {len(all_matches)}")
     print(f"Value bet trovate: {len(value_bets)}")
 
-    # 🔹 Genera combinazioni multiple da tutte le partite
+    # 🔹 Combinazioni multiple
     all_combos = []
     for r in [2,3]:
-        for combo in combinations(all_matches, r):
-            ev_combo = prod([m['expected_value'] for m in combo])
-            all_combos.append({'matches': combo, 'ev_combined': ev_combo})
+        if len(all_matches) >= r:
+            for combo in combinations(all_matches, r):
+                ev_combo = prod([m['expected_value'] for m in combo])
+                all_combos.append({'matches': combo, 'ev_combined': ev_combo})
 
-    # 🔹 Ordina top 5 combinazioni per EV combinato
+    # 🔹 Top 5 combinazioni
     top_combos = sorted(all_combos, key=lambda x: x['ev_combined'], reverse=True)[:5]
 
     # 🔹 Invia messaggio Telegram
