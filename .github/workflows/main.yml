@@ -1,0 +1,21 @@
+name: Betting Engine Analysis
+on:
+  schedule:
+    - cron: '0 9 * * 5' # Ogni venerdì mattina, prima del weekend
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with: {python-version: '3.9'}
+      - name: Install dependencies
+        run: pip install supabase numpy scipy
+      - name: Run Betting Engine
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python bet_engine.py
