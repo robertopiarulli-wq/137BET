@@ -24,7 +24,7 @@ def main():
             if match_time == today:
                 matches_today.append(m)
         else:
-            matches_today.append(m)  # fallback
+            matches_today.append(m)
 
     print(f"MATCHES FOUND TODAY: {len(matches_today)}")
 
