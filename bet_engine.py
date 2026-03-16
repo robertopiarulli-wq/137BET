@@ -109,7 +109,7 @@ def run_analysis():
         if s_home and s_away:
             p_home, _, _ = get_poisson_probs(s_home['avg_scored'], s_home['avg_conceded'], 
                                              s_away['avg_scored'], s_away['avg_conceded'], 1.5, 1.2)
-            if p_home > 0.52:
+            if p_home > 0.30:
                 picks.append(f"[{m['league']}] {m['home_team_name']} vs {m['away_team_name']} (P: {round(p_home, 2)})")
 
     if picks:
