@@ -10,7 +10,6 @@ from thefuzz import process
 # Setup Connessioni
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
 
-# Mappatura Leghe
 LEAGUES = {
     'SA': 'soccer_italy_serie_a',
     'PL': 'soccer_epl',
@@ -26,7 +25,6 @@ def format_date(iso_date):
     except: return "Data N.D."
 
 def find_best_match(name, choices, threshold=80):
-    """Corrispondenza nomi automatica e intelligente."""
     best_match, score = process.extractOne(name, choices)
     return best_match if score >= threshold else None
 
@@ -69,24 +67,29 @@ def fetch_and_populate_matches():
     api_key = os.environ.get("ODDS_API_KEY")
     supabase.table("matches").delete().neq("id", 0).execute()
     
-    # Limite di tempo: cerchiamo match nei prossimi 7 giorni
     limit_date = datetime.now(timezone.utc) + timedelta(days=7)
     
     for code, api_name in LEAGUES.items():
+        print(f"DEBUG: Recupero quote per {code}...")
         url = f"https://api.the-odds-api.com/v4/sports/{api_name}/odds/?apiKey={api_key}&regions=eu&markets=h2h"
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=15)
             if response.status_code == 200:
                 matches = response.json()
+                count = 0
                 for m in matches:
                     match_dt = datetime.fromisoformat(m['commence_time'].replace('Z', '+00:00'))
-                    if match_dt < limit_date: # Solo match a breve termine
+                    if match_dt < limit_date:
                         supabase.table("matches").insert({
                             "home_team_name": m['home_team'], "away_team_name": m['away_team'],
                             "match_date": m['commence_time'], "status": "scheduled", "league": code
                         }).execute()
+                        count += 1
+                print(f"DEBUG: {count} match inseriti per {code}.")
+            else:
+                print(f"ERROR: API Quote {code} ha restituito status {response.status_code}. Msg: {response.text}")
         except Exception as e:
-            print(f"ERROR MATCHES {code}: {e}")
+            print(f"EXCEPTION CRITICA su {code}: {e}")
         time.sleep(2)
 
 def run_analysis():
