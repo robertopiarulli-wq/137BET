@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import requests
+import time # Aggiunto per gestire il limite di velocità API
 from scipy.stats import poisson
 from supabase import create_client
 
@@ -8,7 +9,6 @@ from supabase import create_client
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
 ALPHA = 0.0073 
 
-# Mappatura Codici Campionato (Football-Data: Odds-API)
 LEAGUES = {
     'SA': 'soccer_italy_serie_a',
     'PL': 'soccer_epl',
@@ -31,61 +31,61 @@ def send_telegram_msg(message):
     requests.post(url, data=payload)
 
 def update_stats_from_api():
-    """Aggiorna le statistiche per tutti i Big 5."""
+    """Aggiorna le statistiche gestendo i limiti di velocità (Rate Limit)."""
     headers = {"X-Auth-Token": os.environ.get("FOOTBALL_DATA_API_KEY")}
-    
-    # Mapping esteso per i Big 5 (Aggiungi qui man mano che trovi differenze)
     mapping = {
-        "FC Internazionale Milano": "Inter Milan",
-        "Juventus FC": "Juventus",
-        "FC Bayern München": "Bayern Munich",
-        "Real Madrid CF": "Real Madrid",
-        "Paris Saint-Germain FC": "Paris Saint Germain",
-        "Manchester City FC": "Manchester City",
-        "Arsenal FC": "Arsenal",
-        "Bayer 04 Leverkusen": "Bayer Leverkusen"
+        "FC Internazionale Milano": "Inter Milan", "Juventus FC": "Juventus",
+        "FC Bayern München": "Bayern Munich", "Real Madrid CF": "Real Madrid",
+        "Paris Saint-Germain FC": "Paris Saint Germain", "Manchester City FC": "Manchester City",
+        "Arsenal FC": "Arsenal", "Bayer 04 Leverkusen": "Bayer Leverkusen",
+        "Borussia Dortmund": "Borussia Dortmund", "FC Barcelona": "Barcelona"
     }
 
     for code in LEAGUES.keys():
+        print(f"DEBUG: Recupero classifica per {code}...")
         url = f"https://api.football-data.org/v4/competitions/{code}/standings"
         response = requests.get(url, headers=headers)
         
         if response.status_code == 200:
             data = response.json()
-            for team_info in data['standings'][0]['table']:
-                raw_name = team_info['team']['name']
-                name = mapping.get(raw_name, raw_name)
-                played = team_info['playedGames']
-                if played > 0:
-                    scored = team_info['goalsFor'] / played
-                    conceded = team_info['goalsAgainst'] / played
-                    supabase.table("teams").upsert({
-                        "team_name": name,
-                        "avg_scored": round(scored, 2),
-                        "avg_conceded": round(conceded, 2)
-                    }, on_conflict="team_name").execute()
-            print(f"DEBUG: Statistiche {code} aggiornate.")
+            # Verifichiamo che i dati esistano
+            if 'standings' in data and len(data['standings']) > 0:
+                for team_info in data['standings'][0]['table']:
+                    raw_name = team_info['team']['name']
+                    name = mapping.get(raw_name, raw_name)
+                    played = team_info['playedGames']
+                    if played > 0:
+                        scored = team_info['goalsFor'] / played
+                        conceded = team_info['goalsAgainst'] / played
+                        supabase.table("teams").upsert({
+                            "team_name": name, "avg_scored": round(scored, 2), "avg_conceded": round(conceded, 2)
+                        }, on_conflict="team_name").execute()
+                print(f"DEBUG: Statistiche {code} caricate in Supabase.")
+            else:
+                print(f"DEBUG: Formato dati non valido per {code}")
+        else:
+            print(f"DEBUG: Errore API Football-Data ({code}): {response.status_code}")
+        
+        # Aspetta 2 secondi tra una lega e l'altra per non farti bannare dal piano free
+        time.sleep(2)
 
 def fetch_and_populate_matches():
-    """Scarica le prossime partite per tutti i Big 5."""
+    """Scarica match da The Odds API."""
     api_key = os.environ.get("ODDS_API_KEY")
-    supabase.table("matches").delete().neq("id", 0).execute() # Reset totale
+    supabase.table("matches").delete().neq("id", 0).execute()
     
     for code, api_name in LEAGUES.items():
         url = f"https://api.the-odds-api.com/v4/sports/{api_name}/odds/?apiKey={api_key}&regions=eu&markets=h2h"
         response = requests.get(url)
-        
         if response.status_code == 200:
             matches = response.json()
             for m in matches:
                 supabase.table("matches").insert({
-                    "home_team_name": m['home_team'],
-                    "away_team_name": m['away_team'],
-                    "match_date": m['commence_time'],
-                    "status": "scheduled",
-                    "league": code
+                    "home_team_name": m['home_team'], "away_team_name": m['away_team'],
+                    "match_date": m['commence_time'], "status": "scheduled", "league": code
                 }).execute()
             print(f"DEBUG: Match {code} inseriti.")
+        time.sleep(1) # Piccolo delay anche qui
 
 def run_analysis():
     print("DEBUG: Avvio Analisi Big 5...")
@@ -96,6 +96,8 @@ def run_analysis():
     stats = supabase.table("teams").select("*").execute().data
     stats_map = {s['team_name']: s for s in stats}
     
+    print(f"DEBUG: Totale squadre caricate in stats_map: {len(stats_map)}")
+    
     picks = []
     for m in matches:
         s_home = stats_map.get(m['home_team_name'])
@@ -104,13 +106,13 @@ def run_analysis():
         if s_home and s_away:
             p_home, _, _ = get_poisson_probs(s_home['avg_scored'], s_home['avg_conceded'], 
                                              s_away['avg_scored'], s_away['avg_conceded'], 1.5, 1.2)
-            if p_home > 0.55: # Alzata leggermente la soglia per i Big 5
+            if p_home > 0.52: # Soglia test
                 picks.append(f"[{m['league']}] {m['home_team_name']} vs {m['away_team_name']} (P: {round(p_home, 2)})")
 
     if picks:
-        send_telegram_msg("🌍 *Analisi Big 5 Europei*\n\n" + "\n".join(picks))
+        send_telegram_msg("🌍 *Analisi Big 5 Europei*\n\n" + "\n".join(picks[:10]))
     else:
-        send_telegram_msg("⚠️ Nessun match di valore nei Big 5 oggi.")
+        send_telegram_msg("⚠️ Analisi completata: nessun match soddisfa i parametri oggi.")
 
 if __name__ == "__main__":
     run_analysis()
