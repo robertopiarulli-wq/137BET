@@ -1,0 +1,13 @@
+# Cartelle di ambiente virtuale
+venv/
+env/
+.env
+
+# File di sistema e cache
+__pycache__/
+*.pyc
+
+# File di configurazione sensibili (Fondamentale!)
+.env
+config.json
+secret_keys.txt
