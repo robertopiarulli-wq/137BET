@@ -4,8 +4,10 @@ from quantum_model import calculate_quantum_probabilities
 from telegram_bot import send_telegram_message
 from itertools import combinations
 from datetime import datetime, timezone
+from math import prod
 
-INSTABILITY_THRESHOLD = 0.005  # soglia minima instabilità α
+INSTABILITY_THRESHOLD = 0.005  # α minima per evidenziazione
+EV_THRESHOLD = 0.99            # soglia Value Bet singole
 
 def main():
     print("START BOT")
@@ -13,7 +15,7 @@ def main():
     # 🔹 Prende tutte le partite disponibili dall'API
     matches = get_all_matches()
 
-    # 🔹 Filtra solo partite della giornata (robusto se manca commence_time)
+    # 🔹 Filtra solo partite della giornata
     today = datetime.now(timezone.utc).date()
     matches_today = []
     for m in matches:
@@ -22,8 +24,7 @@ def main():
             if match_time == today:
                 matches_today.append(m)
         else:
-            # Fall-back: considera comunque la partita
-            matches_today.append(m)
+            matches_today.append(m)  # fallback
 
     print(f"MATCHES FOUND TODAY: {len(matches_today)}")
 
@@ -42,24 +43,25 @@ def main():
         m['instability'] = abs(probs[0] - probs[2]) * alpha
         all_matches.append(m)
 
-        # Singole Value Bet
-        if m['expected_value'] >= 0.99:
+        # 🔹 Singole Value Bet
+        if m['expected_value'] >= EV_THRESHOLD:
             value_bets.append(m)
 
     print(f"Value bet trovate: {len(value_bets)}")
 
-    # 🔹 Filtra solo partite instabili per combinazioni multiple
-    filtered_matches = [m for m in all_matches if m['instability'] > INSTABILITY_THRESHOLD]
-
-    # 🔹 Genera combinazioni multiple top 5 (2 o 3 partite)
-    top_combinations = []
+    # 🔹 Genera combinazioni multiple da tutte le partite
+    all_combos = []
     for r in [2,3]:
-        for combo in combinations(filtered_matches, r):
-            top_combinations.append(combo)
-    top_combinations = top_combinations[:5]
+        for combo in combinations(all_matches, r):
+            # Calcola EV combinato
+            ev_combo = prod([m['expected_value'] for m in combo])
+            all_combos.append({'matches': combo, 'ev_combined': ev_combo})
+
+    # 🔹 Ordina top 5 combinazioni per EV combinato
+    top_combos = sorted(all_combos, key=lambda x: x['ev_combined'], reverse=True)[:5]
 
     # 🔹 Invia messaggio Telegram
-    send_telegram_message(value_bets, top_combinations)
+    send_telegram_message(value_bets, top_combos)
 
 if __name__ == "__main__":
     main()
