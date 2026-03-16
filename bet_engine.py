@@ -2,14 +2,15 @@ import os
 import numpy as np
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from scipy.stats import poisson
 from supabase import create_client
 from thefuzz import process
 
-# Setup
+# Setup Connessioni
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
 
+# Mappatura Leghe
 LEAGUES = {
     'SA': 'soccer_italy_serie_a',
     'PL': 'soccer_epl',
@@ -25,7 +26,7 @@ def format_date(iso_date):
     except: return "Data N.D."
 
 def find_best_match(name, choices, threshold=80):
-    """Trova il nome più simile usando Fuzzy Matching."""
+    """Corrispondenza nomi automatica e intelligente."""
     best_match, score = process.extractOne(name, choices)
     return best_match if score >= threshold else None
 
@@ -38,15 +39,16 @@ def get_poisson_probs(att_h, def_h, att_a, def_a, avg_h, avg_a):
 def send_telegram_msg(message):
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
+    requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
+                  data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
 
 def update_stats_from_api():
+    print("DEBUG: Avvio aggiornamento statistiche...")
     headers = {"X-Auth-Token": os.environ.get("FOOTBALL_DATA_API_KEY")}
     for code in LEAGUES.keys():
         url = f"https://api.football-data.org/v4/competitions/{code}/standings"
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 for team_info in data['standings'][0]['table']:
@@ -57,11 +59,39 @@ def update_stats_from_api():
                             "avg_scored": round(team_info['goalsFor'] / played, 2),
                             "avg_conceded": round(team_info['goalsAgainst'] / played, 2)
                         }, on_conflict="team_name").execute()
-        except: pass
+                print(f"SUCCESS: {code} aggiornato.")
+        except Exception as e:
+            print(f"ERROR {code}: {e}")
         time.sleep(6)
+
+def fetch_and_populate_matches():
+    print("DEBUG: Avvio recupero partite...")
+    api_key = os.environ.get("ODDS_API_KEY")
+    supabase.table("matches").delete().neq("id", 0).execute()
+    
+    # Limite di tempo: cerchiamo match nei prossimi 7 giorni
+    limit_date = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    for code, api_name in LEAGUES.items():
+        url = f"https://api.the-odds-api.com/v4/sports/{api_name}/odds/?apiKey={api_key}&regions=eu&markets=h2h"
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                matches = response.json()
+                for m in matches:
+                    match_dt = datetime.fromisoformat(m['commence_time'].replace('Z', '+00:00'))
+                    if match_dt < limit_date: # Solo match a breve termine
+                        supabase.table("matches").insert({
+                            "home_team_name": m['home_team'], "away_team_name": m['away_team'],
+                            "match_date": m['commence_time'], "status": "scheduled", "league": code
+                        }).execute()
+        except Exception as e:
+            print(f"ERROR MATCHES {code}: {e}")
+        time.sleep(2)
 
 def run_analysis():
     update_stats_from_api()
+    fetch_and_populate_matches()
     
     matches = supabase.table("matches").select("*").execute().data
     stats = supabase.table("teams").select("*").execute().data
@@ -79,11 +109,13 @@ def run_analysis():
         if s_home and s_away:
             p_home, _, _ = get_poisson_probs(s_home['avg_scored'], s_home['avg_conceded'], 
                                              s_away['avg_scored'], s_away['avg_conceded'], 1.5, 1.2)
-            if p_home > 0.52:
+            if p_home > 0.50:
                 picks.append(f"📅 *{format_date(m['match_date'])}* - [{m['league']}]\n🏟 *{m['home_team_name']}* vs {m['away_team_name']}\n📈 Vittoria Casa: *{round(p_home * 100, 1)}%*")
 
     if picks:
         send_telegram_msg("🌍 *ANALISI BIG 5 EUROPEI* 🌍\n\n" + "\n\n".join(picks[:10]))
+    else:
+        send_telegram_msg("⚠️ Analisi completata: nessun match a breve termine soddisfa i criteri.")
 
 if __name__ == "__main__":
     run_analysis()
