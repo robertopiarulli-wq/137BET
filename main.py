@@ -1,8 +1,9 @@
+# main.py
 from odds_api import get_all_matches
-from datetime import datetime, timezone
 from quantum_model import calculate_quantum_probabilities
 from telegram_bot import send_telegram_message
 from itertools import combinations
+from datetime import datetime, timezone
 
 INSTABILITY_THRESHOLD = 0.005  # soglia minima instabilità α
 
@@ -12,9 +13,17 @@ def main():
     # 🔹 Prende tutte le partite disponibili dall'API
     matches = get_all_matches()
 
-    # 🔹 Filtra solo partite della giornata corrente
+    # 🔹 Filtra solo partite della giornata (robusto se manca commence_time)
     today = datetime.now(timezone.utc).date()
-    matches_today = [m for m in matches if datetime.fromisoformat(m['commence_time'][:-1]).date() == today]
+    matches_today = []
+    for m in matches:
+        if 'commence_time' in m:
+            match_time = datetime.fromisoformat(m['commence_time'].replace('Z','+00:00')).date()
+            if match_time == today:
+                matches_today.append(m)
+        else:
+            # Fall-back: considera comunque la partita
+            matches_today.append(m)
 
     print(f"MATCHES FOUND TODAY: {len(matches_today)}")
 
@@ -23,7 +32,7 @@ def main():
 
     alpha = 1 / 137  # instabilità
 
-    # 🔹 Calcolo probabilità, EV e instabilità
+    # 🔹 Calcolo probabilità quantistiche, EV e instabilità
     for m in matches_today:
         probs = calculate_quantum_probabilities(m)
         m['quantum_probs'] = probs
