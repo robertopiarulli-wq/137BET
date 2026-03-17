@@ -17,127 +17,93 @@ def format_date(iso_date):
         return dt.strftime("%d/%m %H:%M")
     except: return "N.D."
 
-def find_best_match(name, choices, threshold=80):
-    best_match, score = process.extractOne(name, choices)
-    return best_match if score >= threshold else None
-
 def get_full_analysis(att_h, def_h, att_a, def_a):
-    # Logica Dinamica: calcoliamo la forza d'attacco rispetto alla difesa avversaria
-    # Se i valori sono 1.0, significa che sono nella media.
-    # Usiamo una base di 1.25 gol (media prudente per singola squadra)
-    base_goals = 1.25
+    # Costante correttiva per evitare l'inflazione dei gol
+    # 1.15 è una media prudente che favorisce la comparsa di Under e Pareggi
+    base = 1.15 
     
-    lam_h = att_h * def_a * base_goals
-    lam_a = att_a * def_h * base_goals
+    lam_h = att_h * def_a * base
+    lam_a = att_a * def_h * base
     
-    # Creiamo la matrice delle probabilità
-    probs = np.array([[poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a) for j in range(6)] for i in range(6)])
+    # Generazione matrice 6x6
+    probs = np.zeros((6, 6))
+    for i in range(6):
+        for j in range(6):
+            probs[i,j] = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
     
-    p1 = np.sum(np.tril(probs, -1)) # Vittoria Casa
+    p1 = np.sum(np.tril(probs, -1)) # Casa vince
     px = np.sum(np.diag(probs))     # Pareggio
-    p2 = np.sum(np.triu(probs, 1))  # Vittoria Trasferta
+    p2 = np.sum(np.triu(probs, 1))  # Ospite vince
     
-    # Calcolo Over 2.5 (risultati con somma gol > 2)
-    p_over_25 = 1 - (probs[0,0] + probs[0,1] + probs[0,2] + probs[1,0] + probs[1,1] + probs[2,0])
+    # Calcolo Over 2.5 rigoroso
+    p_under_25 = probs[0,0] + probs[0,1] + probs[0,2] + probs[1,0] + probs[1,1] + probs[2,0]
+    p_over = 1 - p_under_25
     
-    return p1, px, p2, p_over_25
+    return p1, px, p2, p_over
 
 def send_telegram_msg(message):
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
 
-def update_stats_from_api():
-    headers = {"X-Auth-Token": os.environ.get("FOOTBALL_DATA_API_KEY")}
-    for code in LEAGUES.keys():
-        try:
-            url = f"https://api.football-data.org/v4/competitions/{code}/standings"
-            data = requests.get(url, headers=headers, timeout=10).json()
-            for team_info in data['standings'][0]['table']:
-                played = team_info['playedGames']
-                if played > 5: # Calcoliamo le medie solo se hanno giocato almeno 5 partite
-                    supabase.table("teams").upsert({
-                        "team_name": team_info['team']['name'],
-                        "avg_scored": round(team_info['goalsFor'] / played, 2),
-                        "avg_conceded": round(team_info['goalsAgainst'] / played, 2)
-                    }, on_conflict="team_name").execute()
-            time.sleep(2)
-        except: continue
-
-def fetch_and_populate_matches():
-    api_key = os.environ.get("ODDS_API_KEY")
-    supabase.table("matches").delete().neq("id", 0).execute()
-    for code, api_name in LEAGUES.items():
-        url = f"https://api.the-odds-api.com/v4/sports/{api_name}/odds/?apiKey={api_key}&regions=eu&markets=h2h"
-        try:
-            response = requests.get(url, timeout=15).json()
-            for m in response:
-                if not m['bookmakers']: continue
-                odds = m['bookmakers'][0]['markets'][0]['outcomes']
-                o1 = next((o['price'] for o in odds if o['name'] == m['home_team']), 1.0)
-                ox = next((o['price'] for o in odds if o['name'] == 'Draw'), 1.0)
-                o2 = next((o['price'] for o in odds if o['name'] == m['away_team']), 1.0)
-                supabase.table("matches").insert({
-                    "home_team_name": m['home_team'], "away_team_name": m['away_team'],
-                    "match_date": m['commence_time'], "league": code,
-                    "odds_1": o1, "odds_x": ox, "odds_2": o2
-                }).execute()
-        except: continue
-
 def run_analysis():
-    update_stats_from_api()
-    fetch_and_populate_matches()
-    
+    # Recupero dati
     matches = supabase.table("matches").select("*").execute().data
-    stats_map = {s['team_name']: s for s in supabase.table("teams").select("*").execute().data}
-    
+    teams_data = supabase.table("teams").select("*").execute().data
+    stats_map = {t['team_name']: t for t in teams_data}
+    team_names_list = list(stats_map.keys())
+
     now = datetime.now(timezone.utc)
     limit_date = now + timedelta(hours=120)
-    
-    best_signs_by_match = {}
-    
+    results = []
+
     for m in matches:
         match_time = datetime.fromisoformat(m['match_date'].replace('Z', '+00:00'))
         if match_time < now or match_time > limit_date: continue
 
-        s_h = stats_map.get(find_best_match(m['home_team_name'], list(stats_map.keys())))
-        s_a = stats_map.get(find_best_match(m['away_team_name'], list(stats_map.keys())))
-        if not (s_h and s_a): continue
-            
-        p1, px, p2, p_over = get_full_analysis(s_h['avg_scored'], s_h['avg_conceded'], s_a['avg_scored'], s_a['avg_conceded'])
-        
-        match_name = f"{m['home_team_name']} vs {m['away_team_name']}"
-        
-        # Logica Doppia Chance basata sulle probabilità reali
-        probs_dc = {'1X': p1 + px, 'X2': px + p2, '12': p1 + p2}
-        best_dc = max(probs_dc, key=probs_dc.get)
-        
-        # Logica Over/Under con soglia più rigida
-        best_ou = "Over 2.5" if p_over > 0.55 else "Under 2.5"
-        
-        possible_bets = [('1', p1, m['odds_1']), ('X', px, m['odds_x']), ('2', p2, m['odds_2'])]
-        best_ev = -1.0
-        best_data = None
-        
-        for segno, prob, quota in possible_bets:
-            ev = (prob * quota) - 1
-            if ev > best_ev:
-                best_ev = ev
-                best_data = {
-                    "match": match_name, "segno": segno, "ev": ev, "quota": quota, 
-                    "date": m['match_date'], "dc": best_dc, "ou": f"{best_ou} ({round(p_over*100)}%)"
-                }
-        
-        if best_ev > 0:
-            best_signs_by_match[match_name] = best_data
+        # Matching nomi squadre
+        h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=70)
+        a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=70)
 
-    candidates = sorted(best_signs_by_match.values(), key=lambda x: x['ev'], reverse=True)
+        if h_res and a_res:
+            s_h = stats_map[h_res[0]]
+            s_a = stats_map[a_res[0]]
+            
+            p1, px, p2, p_over = get_full_analysis(s_h['avg_scored'], s_h['avg_conceded'], s_a['avg_scored'], s_a['avg_conceded'])
+            
+            # Determinazione Doppia Chance (la più probabile)
+            dc_map = {'1X': p1 + px, 'X2': px + p2, '12': p1 + p2}
+            best_dc = max(dc_map, key=dc_map.get)
+            
+            # Determinazione Over/Under (soglia 50%)
+            ou_label = "Over 2.5" if p_over > 0.50 else "Under 2.5"
+            
+            # Scelta del segno con EV maggiore
+            outcomes = [('1', p1, m['odds_1']), ('X', px, m['odds_x']), ('2', p2, m['odds_2'])]
+            best_ev = -999
+            selected = None
+            
+            for segno, prob, quota in outcomes:
+                ev = (prob * quota) - 1
+                if ev > best_ev:
+                    best_ev = ev
+                    selected = (segno, quota)
+
+            results.append({
+                "match": f"{m['home_team_name']} vs {m['away_team_name']}",
+                "date": m['match_date'],
+                "segno": selected[0], "quota": selected[1], "ev": best_ev,
+                "dc": best_dc, "ou": f"{ou_label} ({round(p_over*100)}%)"
+            })
+
+    # Ordiniamo per EV decrescente
+    candidates = sorted(results, key=lambda x: x['ev'], reverse=True)
     
     if not candidates:
-        send_telegram_msg("⚠️ Nessun valore trovato nei prossimi 5 giorni.")
+        send_telegram_msg("⚠️ Nessun match trovato.")
         return
 
-    msg = "📊 *ANALISI TECNICA AGGIORNATA*\n\n"
+    msg = "📊 *TOP 15 ANALISI (STIME RICALIBRATE)*\n\n"
     for b in candidates[:15]:
         msg += (f"📅 {format_date(b['date'])}\n"
                 f"🏟 {b['match']}\n"
