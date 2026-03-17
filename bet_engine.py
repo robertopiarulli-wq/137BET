@@ -1,40 +1,33 @@
-import os
-import numpy as np
-import requests
-import time
-from datetime import datetime, timedelta, timezone
-from scipy.stats import poisson
-from supabase import create_client
-from thefuzz import process
+def get_form_multiplier(form_string):
+    """
+    Trasforma la stringa della forma in un moltiplicatore di forza.
+    W=3 punti, D=1 punto, L=0 punti. Media ideale = 7 punti (1.0)
+    """
+    if not form_string or form_string == 'DDDDD':
+        return 1.0
+    
+    # Pulizia: prendiamo solo gli ultimi 5 caratteri
+    form = form_string.replace(',', '')[-5:].upper()
+    points = sum(3 if r == 'W' else 1 if r == 'D' else 0 for r in form)
+    
+    # Regressione lineare semplice: 7 punti = 1.0. 
+    # Ogni punto di scarto sposta il valore del 3%
+    multiplier = 1.0 + (points - 7) * 0.03
+    return max(0.85, min(1.15, multiplier))
 
-# Setup
-supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
-
-def format_date(iso_date):
-    try:
-        dt = datetime.fromisoformat(iso_date.replace('Z', '+00:00'))
-        return dt.strftime("%d/%m %H:%M")
-    except: return "N.D."
-
-def send_telegram_msg(message):
-    token = os.environ.get("TELEGRAM_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    if token and chat_id:
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
-                      data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
-
-def dixon_coles_tau(i, j, lam_h, lam_a, rho):
-    if i == 0 and j == 0: return 1 - (lam_h * lam_a * rho)
-    if i == 0 and j == 1: return 1 + (lam_h * rho)
-    if i == 1 and j == 0: return 1 + (lam_a * rho)
-    if i == 1 and j == 1: return 1 - rho
-    return 1.0
-
-def get_full_analysis(att_h, def_h, att_a, def_a):
+def get_full_analysis(team_h, team_a):
+    # Recuperiamo la forma dalle colonne di Supabase
+    f_h = get_form_multiplier(team_h.get('recent_form', 'DDDDD'))
+    f_a = get_form_multiplier(team_a.get('recent_form', 'DDDDD'))
+    
     avg_goals = 1.25 
-    lam_h = (att_h * 1.12) * (def_a * 0.95) * avg_goals
-    lam_a = (att_a * 0.92) * (def_h * 1.05) * avg_goals
-    rho = -0.20 
+    
+    # APPLICAZIONE REGRESSIONE: la forma moltiplica l'attacco e divide la vulnerabilità
+    # Se f_h > 1 (forma ottima), lam_h sale. Se f_a < 1 (crisi), lam_h sale ulteriormente.
+    lam_h = (team_h['avg_scored'] * f_h) * (team_a['avg_conceded'] / f_a) * 1.12 * avg_goals
+    lam_a = (team_a['avg_scored'] * f_a) * (team_h['avg_conceded'] / f_h) * 0.92 * avg_goals
+    
+    rho = -0.20 # Dixon-Coles
     
     probs = np.zeros((6, 6))
     for i in range(6):
@@ -45,79 +38,9 @@ def get_full_analysis(att_h, def_h, att_a, def_a):
     probs /= probs.sum()
     p1, px, p2 = np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1))
     
+    # Combo Larga
     p_u35 = sum(probs[i,j] for i in range(6) for j in range(6) if i+j <= 3)
     p_o15 = 1 - (probs[0,0] + probs[0,1] + probs[1,0])
     
     combo, c_prob = ("U 3.5", p_u35) if p_u35 > 0.60 else ("O 1.5", p_o15)
     return p1, px, p2, combo, c_prob
-
-def run_analysis():
-    matches = supabase.table("matches").select("*").execute().data
-    teams_data = supabase.table("teams").select("*").execute().data
-    stats_map = {t['team_name']: t for t in teams_data}
-    team_names_list = list(stats_map.keys())
-
-    now = datetime.now(timezone.utc)
-    limit_date = now + timedelta(hours=120)
-    results = []
-    
-    stats_log = {"1": 0, "X": 0, "2": 0, "O 1.5": 0, "U 3.5": 0}
-
-    for m in matches:
-        match_time = datetime.fromisoformat(m['match_date'].replace('Z', '+00:00'))
-        if match_time < now or match_time > limit_date: continue
-
-        h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=70)
-        a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=70)
-
-        if h_res and a_res:
-            p1, px, p2, combo, c_prob = get_full_analysis(stats_map[h_res[0]]['avg_scored'], stats_map[h_res[0]]['avg_conceded'], 
-                                                          stats_map[a_res[0]]['avg_scored'], stats_map[a_res[0]]['avg_conceded'])
-            
-            best_s = 'X' if px >= 0.27 else max([('1', p1), ('X', px), ('2', p2)], key=lambda x: x[1])[0]
-            
-            stats_log[best_s] += 1
-            stats_log[combo] += 1
-
-            results.append({
-                "match": f"{m['home_team_name']} vs {m['away_team_name']}",
-                "date": m['match_date'], "segno": best_s, 
-                "prob": px if best_s == 'X' else max(p1, p2),
-                "quota": m.get(f'odds_{best_s.lower()}', 1.0), 
-                "combo": f"{combo} ({round(c_prob*100)}%)"
-            })
-
-    print(f"\n--- REPORT STATISTICO ANALISI ({len(results)} match) ---")
-    print(f"Segni suggeriti: 1: {stats_log['1']} | X: {stats_log['X']} | 2: {stats_log['2']}")
-    print(f"Combo suggerite: O 1.5: {stats_log['O 1.5']} | U 3.5: {stats_log['U 3.5']}\n")
-
-    # LOGICA DI SMISTAMENTO CORRETTA
-    fisse_12 = sorted([r for r in results if r['segno'] in ['1', '2']], key=lambda x: x['prob'], reverse=True)
-    fisse_x = sorted([r for r in results if r['segno'] == 'X'], key=lambda x: x['prob'], reverse=True)
-    combo_under = sorted([r for r in results if "U 3.5" in r['combo']], key=lambda x: x['prob'], reverse=True)
-
-    # Selezione iniziale
-    final_list = fisse_12[:10] + fisse_x[:4] + combo_under[:4]
-    
-    # Riempimento se mancano elementi (evita duplicati usando i nomi dei match)
-    if len(final_list) < 18:
-        already_in_matches = {r['match'] for r in final_list}
-        remaining = sorted([r for r in results if r['match'] not in already_in_matches], key=lambda x: x['prob'], reverse=True)
-        final_list += remaining[:(18 - len(final_list))]
-
-    if not final_list:
-        send_telegram_msg("⚠️ Nessun match trovato.")
-        return
-
-    msg = "🔬 *DIXON-COLES MIX (10+4+4)*\n\n"
-    for b in final_list:
-        msg += (f"📅 {format_date(b['date'])}\n"
-                f"🏟 {b['match']}\n"
-                f"🎯 Fissa: *{b['segno']}* @{b['quota']}\n"
-                f"🛡 Combo: *{b['combo']}*\n"
-                f"────────────────\n")
-    
-    send_telegram_msg(msg)
-
-if __name__ == "__main__":
-    run_analysis()
