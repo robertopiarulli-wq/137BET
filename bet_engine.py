@@ -42,7 +42,7 @@ def run_analysis():
     
     # Range temporale: da adesso fino a 48 ore (per coprire il weekend)
     now = datetime.now(timezone.utc)
-    limit_date = now + timedelta(hours=48)
+    limit_date = now + timedelta(hours=120)
     
     best_signs_by_match = {}
     
