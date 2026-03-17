@@ -17,37 +17,52 @@ def format_date(iso_date):
         return dt.strftime("%d/%m %H:%M")
     except: return "N.D."
 
+def dixon_coles_correction(i, j, lam_h, lam_a, rho):
+    """Funzione Tau per correggere la sottostima dei punteggi bassi"""
+    if i == 0 and j == 0:
+        return 1 - (lam_h * lam_a * rho)
+    elif i == 0 and j == 1:
+        return 1 + (lam_h * rho)
+    elif i == 1 and j == 0:
+        return 1 + (lam_a * rho)
+    elif i == 1 and j == 1:
+        return 1 - rho
+    return 1.0
+
 def get_full_analysis(att_h, def_h, att_a, def_a):
-    # Costante correttiva per evitare l'inflazione dei gol
-    # 1.15 è una media prudente che favorisce la comparsa di Under e Pareggi
-    base = 1.15 
+    avg_goals = 1.32
+    lam_h = att_h * def_a * avg_goals
+    lam_a = att_a * def_h * avg_goals
     
-    lam_h = att_h * def_a * base
-    lam_a = att_a * def_h * base
+    # Parametro rho per Dixon-Coles (tipicamente negativo per favorire i pareggi bassi)
+    rho = -0.12
     
-    # Generazione matrice 6x6
     probs = np.zeros((6, 6))
     for i in range(6):
         for j in range(6):
-            probs[i,j] = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
+            # Poisson base * Correzione Dixon-Coles
+            base_prob = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
+            correction = dixon_coles_correction(i, j, lam_h, lam_a, rho)
+            probs[i,j] = base_prob * correction
     
-    p1 = np.sum(np.tril(probs, -1)) # Casa vince
-    px = np.sum(np.diag(probs))     # Pareggio
-    p2 = np.sum(np.triu(probs, 1))  # Ospite vince
+    # Normalizzazione (Dixon-Coles altera la somma, dobbiamo riportarla a 1)
+    probs /= probs.sum()
     
-    # Calcolo Over 2.5 rigoroso
-    p_under_25 = probs[0,0] + probs[0,1] + probs[0,2] + probs[1,0] + probs[1,1] + probs[2,0]
-    p_over = 1 - p_under_25
+    p1 = np.sum(np.tril(probs, -1))
+    px = np.sum(np.diag(probs))
+    p2 = np.sum(np.triu(probs, 1))
     
-    return p1, px, p2, p_over
-
-def send_telegram_msg(message):
-    token = os.environ.get("TELEGRAM_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
+    # Combo Larga: O 1.5 o U 3.5
+    p_u15 = probs[0,0] + probs[0,1] + probs[1,0]
+    p_o15 = 1 - p_u15
+    p_u35 = sum(probs[i,j] for i in range(6) for j in range(6) if i+j <= 3)
+    
+    combo_label = "O 1.5" if p_o15 > p_u35 else "U 3.5"
+    combo_prob = max(p_o15, p_u35)
+    
+    return p1, px, p2, combo_label, combo_prob
 
 def run_analysis():
-    # Recupero dati
     matches = supabase.table("matches").select("*").execute().data
     teams_data = supabase.table("teams").select("*").execute().data
     stats_map = {t['team_name']: t for t in teams_data}
@@ -61,7 +76,6 @@ def run_analysis():
         match_time = datetime.fromisoformat(m['match_date'].replace('Z', '+00:00'))
         if match_time < now or match_time > limit_date: continue
 
-        # Matching nomi squadre
         h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=70)
         a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=70)
 
@@ -69,46 +83,34 @@ def run_analysis():
             s_h = stats_map[h_res[0]]
             s_a = stats_map[a_res[0]]
             
-            p1, px, p2, p_over = get_full_analysis(s_h['avg_scored'], s_h['avg_conceded'], s_a['avg_scored'], s_a['avg_conceded'])
+            p1, px, p2, combo, c_prob = get_full_analysis(s_h['avg_scored'], s_h['avg_conceded'], s_a['avg_scored'], s_a['avg_conceded'])
             
-            # Determinazione Doppia Chance (la più probabile)
-            dc_map = {'1X': p1 + px, 'X2': px + p2, '12': p1 + p2}
-            best_dc = max(dc_map, key=dc_map.get)
-            
-            # Determinazione Over/Under (soglia 50%)
-            ou_label = "Over 2.5" if p_over > 0.50 else "Under 2.5"
-            
-            # Scelta del segno con EV maggiore
+            # Calcolo EV per trovare il segno migliore
             outcomes = [('1', p1, m['odds_1']), ('X', px, m['odds_x']), ('2', p2, m['odds_2'])]
-            best_ev = -999
-            selected = None
-            
-            for segno, prob, quota in outcomes:
-                ev = (prob * quota) - 1
-                if ev > best_ev:
-                    best_ev = ev
-                    selected = (segno, quota)
+            best_choice = max(outcomes, key=lambda x: (x[1] * x[2]))
+            ev = (best_choice[1] * best_choice[2]) - 1
 
             results.append({
                 "match": f"{m['home_team_name']} vs {m['away_team_name']}",
                 "date": m['match_date'],
-                "segno": selected[0], "quota": selected[1], "ev": best_ev,
-                "dc": best_dc, "ou": f"{ou_label} ({round(p_over*100)}%)"
+                "segno": best_choice[0],
+                "prob": best_choice[1],
+                "ev": ev,
+                "combo": f"{combo} ({round(c_prob*100)}%)"
             })
 
-    # Ordiniamo per EV decrescente
     candidates = sorted(results, key=lambda x: x['ev'], reverse=True)
     
     if not candidates:
-        send_telegram_msg("⚠️ Nessun match trovato.")
+        send_telegram_msg("⚠️ Nessun match trovato per l'analisi Dixon-Coles.")
         return
 
-    msg = "📊 *TOP 15 ANALISI (STIME RICALIBRATE)*\n\n"
+    msg = "🔬 *ANALISI DIXON-COLES (PROIB. CORRETTA)*\n\n"
     for b in candidates[:15]:
         msg += (f"📅 {format_date(b['date'])}\n"
                 f"🏟 {b['match']}\n"
-                f"🎯 Fissa: *{b['segno']}* @{b['quota']} (EV: {round(b['ev']*100,1)}%)\n"
-                f"🛡 Doppia: *{b['dc']}* | ⚽️ *{b['ou']}*\n"
+                f"🎯 Fissa: *{b['segno']}* (Prob: {round(b['prob']*100)}%)\n"
+                f"🛡 Combo: *{b['combo']}*\n"
                 f"────────────────\n")
     
     send_telegram_msg(msg)
