@@ -37,27 +37,32 @@ def send_telegram_msg(message):
     requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
 
 def run_analysis():
-    # Recupero dati da Supabase
     matches = supabase.table("matches").select("*").execute().data
     stats_map = {s['team_name']: s for s in supabase.table("teams").select("*").execute().data}
+    
+    # Range temporale: da adesso fino a 48 ore (per coprire il weekend)
+    now = datetime.now(timezone.utc)
+    limit_date = now + timedelta(hours=48)
     
     best_signs_by_match = {}
     
     for m in matches:
+        # 1. Filtro Temporale: scarta match passati o oltre le 48h
+        match_time = datetime.fromisoformat(m['match_date'].replace('Z', '+00:00'))
+        if match_time < now or match_time > limit_date:
+            continue
+
         s_h = stats_map.get(find_best_match(m['home_team_name'], list(stats_map.keys())))
         s_a = stats_map.get(find_best_match(m['away_team_name'], list(stats_map.keys())))
         if not (s_h and s_a): continue
             
         p1, px, p2, p_over = get_full_analysis(s_h['avg_scored'], s_h['avg_conceded'], s_a['avg_scored'], s_a['avg_conceded'], 1.5, 1.2)
         
-        # Logica Doppia Chance (prende la coppia con probabilità maggiore)
+        # Doppia Chance e Over/Under
         dc_options = [('1X', p1 + px), ('X2', px + p2), ('12', p1 + p2)]
         best_dc = max(dc_options, key=lambda x: x[1])[0]
-        
-        # Logica Over/Under
         best_ou = "Over 2.5" if p_over > 0.52 else "Under 2.5"
         
-        # Scelta della Fissa con EV migliore
         possible_bets = [('1', p1, m['odds_1']), ('X', px, m['odds_x']), ('2', p2, m['odds_2'])]
         
         match_name = f"{m['home_team_name']} vs {m['away_team_name']}"
@@ -76,11 +81,11 @@ def run_analysis():
         if best_ev > 0:
             best_signs_by_match[match_name] = best_data
 
+    # Ordiniamo per EV e prendiamo le prime 15
     candidates = sorted(best_signs_by_match.values(), key=lambda x: x['ev'], reverse=True)
     
-    # Costruzione Messaggio
-    msg = "📊 *ANALISI COMPLETA DEL GIORNO*\n\n"
-    for b in candidates[:10]:
+    msg = "📊 *TOP 15 ANALISI COMPLETE (48H)*\n\n"
+    for b in candidates[:15]:
         msg += (f"📅 {format_date(b['date'])}\n"
                 f"🏟 {b['match']}\n"
                 f"🎯 Fissa: *{b['segno']}* @{b['quota']} (EV: {round(b['ev']*100,1)}%)\n"
