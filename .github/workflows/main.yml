@@ -1,33 +1,31 @@
-name: Bet Engine Daily Analysis
+name: Daily Betting Analysis
 
 on:
   schedule:
-    - cron: '0 7 * * *'
-  workflow_dispatch:
+    - cron: '0 8 * * *' # Gira ogni giorno alle 8 di mattina
+  workflow_dispatch: # Ti permette di lanciarlo a mano quando vuoi
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del codice
-        uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+      - name: Set up Python
+        uses: abc... # (setup python)
 
-      - name: Installazione dipendenze
-        run: |
-          python -m pip install --upgrade pip
-          pip install numpy requests scipy supabase thefuzz python-Levenshtein
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
-      - name: Esecuzione Analisi
+      - name: Update Team Stats and Form
+        run: python update_teams.py # Fase 1: Aggiorna la forma
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
-        run: python bet_engine.py
+          ...
+
+      - name: Run Analysis and Send Telegram
+        run: python bet_engine.py # Fase 2: Calcola e invia
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          ...
