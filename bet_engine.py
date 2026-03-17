@@ -26,7 +26,6 @@ def send_telegram_msg(message):
                       data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
 
 def dixon_coles_correction(i, j, lam_h, lam_a, rho):
-    """Correzione Tau per i punteggi bassi (Dixon-Coles)"""
     if i == 0 and j == 0: return 1 - (lam_h * lam_a * rho)
     if i == 0 and j == 1: return 1 + (lam_h * rho)
     if i == 1 and j == 0: return 1 + (lam_a * rho)
@@ -34,10 +33,13 @@ def dixon_coles_correction(i, j, lam_h, lam_a, rho):
     return 1.0
 
 def get_full_analysis(att_h, def_h, att_a, def_a):
-    avg_goals = 1.32
-    lam_h = att_h * def_a * avg_goals
-    lam_a = att_a * def_h * avg_goals
-    rho = -0.12 # Parametro di dipendenza Dixon-Coles
+    # Abbassiamo la media gol per favorire gli Under realistici
+    avg_goals = 1.22 
+    # Introduciamo il FATTORE CAMPO (+15% attacco casa, -10% difesa casa)
+    lam_h = (att_h * 1.15) * (def_a * 1.0) * avg_goals
+    lam_a = (att_a * 1.0) * (def_h * 0.90) * avg_goals
+    
+    rho = -0.15 # Correzione pareggi più marcata
     
     probs = np.zeros((6, 6))
     for i in range(6):
@@ -45,19 +47,23 @@ def get_full_analysis(att_h, def_h, att_a, def_a):
             base_p = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
             probs[i,j] = base_p * dixon_coles_correction(i, j, lam_h, lam_a, rho)
     
-    probs /= probs.sum() # Normalizzazione
+    probs /= probs.sum()
     
     p1 = np.sum(np.tril(probs, -1))
     px = np.sum(np.diag(probs))
     p2 = np.sum(np.triu(probs, 1))
     
-    # Combo Larga (O 1.5 o U 3.5)
+    # Calcolo accurato Combo Larga
     p_u15 = probs[0,0] + probs[0,1] + probs[1,0]
     p_o15 = 1 - p_u15
+    # Somma probabilità fino a 3 gol totali
     p_u35 = sum(probs[i,j] for i in range(6) for j in range(6) if i+j <= 3)
     
-    combo_label = "O 1.5" if p_o15 > p_u35 else "U 3.5"
-    combo_prob = max(p_o15, p_u35)
+    # La combo deve essere quella con probabilità più alta tra le due
+    if p_o15 > p_u35:
+        combo_label, combo_prob = "O 1.5", p_o15
+    else:
+        combo_label, combo_prob = "U 3.5", p_u35
     
     return p1, px, p2, combo_label, combo_prob
 
@@ -84,28 +90,32 @@ def run_analysis():
             
             p1, px, p2, combo, c_prob = get_full_analysis(s_h['avg_scored'], s_h['avg_conceded'], s_a['avg_scored'], s_a['avg_conceded'])
             
-            # Scelta segno basata su valore (EV)
+            # NUOVA LOGICA: Scegliamo il segno più PROBABILE, non quello con più EV
             outcomes = [('1', p1, m['odds_1']), ('X', px, m['odds_x']), ('2', p2, m['odds_2'])]
-            best_choice = max(outcomes, key=lambda x: (x[1] * x[2]))
+            # Ordiniamo per probabilità decrescente
+            best_choice = max(outcomes, key=lambda x: x[1]) 
             
             results.append({
                 "match": f"{m['home_team_name']} vs {m['away_team_name']}",
-                "date": m['match_date'], "segno": best_choice[0],
-                "prob": best_choice[1], "ev": (best_choice[1] * best_choice[2]) - 1,
+                "date": m['match_date'],
+                "segno": best_choice[0],
+                "prob": best_choice[1],
+                "quota": best_choice[2],
                 "combo": f"{combo} ({round(c_prob*100)}%)"
             })
 
-    candidates = sorted(results, key=lambda x: x['ev'], reverse=True)
+    # Ordiniamo i Top 15 per Probabilità Totale (i più sicuri in cima)
+    candidates = sorted(results, key=lambda x: x['prob'], reverse=True)
     
     if not candidates:
         send_telegram_msg("⚠️ Nessun match trovato.")
         return
 
-    msg = "🔬 *ANALISI DIXON-COLES (TOP 15)*\n\n"
+    msg = "🚀 *TOP 15 PRONOSTICI (PRECISIONE PROB.)*\n\n"
     for b in candidates[:15]:
         msg += (f"📅 {format_date(b['date'])}\n"
                 f"🏟 {b['match']}\n"
-                f"🎯 Fissa: *{b['segno']}* (Prob: {round(b['prob']*100)}%)\n"
+                f"🎯 Fissa: *{b['segno']}* @{b['quota']} (Prob: {round(b['prob']*100)}%)\n"
                 f"🛡 Combo: *{b['combo']}*\n"
                 f"────────────────\n")
     
