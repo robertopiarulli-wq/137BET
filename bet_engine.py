@@ -53,14 +53,14 @@ def get_full_analysis(att_h, def_h, att_a, def_a):
 
 def run_analysis():
     matches = supabase.table("matches").select("*").execute().data
-    stats_map = {t['team_name']: t for t in supabase.table("teams").select("*").execute().data}
+    teams_data = supabase.table("teams").select("*").execute().data
+    stats_map = {t['team_name']: t for t in teams_data}
     team_names_list = list(stats_map.keys())
 
     now = datetime.now(timezone.utc)
     limit_date = now + timedelta(hours=120)
     results = []
     
-    # Contatori per statistiche LOG
     stats_log = {"1": 0, "X": 0, "2": 0, "O 1.5": 0, "U 3.5": 0}
 
     for m in matches:
@@ -74,7 +74,6 @@ def run_analysis():
             p1, px, p2, combo, c_prob = get_full_analysis(stats_map[h_res[0]]['avg_scored'], stats_map[h_res[0]]['avg_conceded'], 
                                                           stats_map[a_res[0]]['avg_scored'], stats_map[a_res[0]]['avg_conceded'])
             
-            # Segno: priorità alla X se sopra 27%, altrimenti il più probabile
             best_s = 'X' if px >= 0.27 else max([('1', p1), ('X', px), ('2', p2)], key=lambda x: x[1])[0]
             
             stats_log[best_s] += 1
@@ -82,26 +81,28 @@ def run_analysis():
 
             results.append({
                 "match": f"{m['home_team_name']} vs {m['away_team_name']}",
-                "date": m['match_date'], "segno": best_s, "prob": px if best_s == 'X' else max(p1, p2),
-                "quota": m[f'odds_{best_s.lower()}'], "combo": f"{combo} ({round(c_prob*100)}%)"
+                "date": m['match_date'], "segno": best_s, 
+                "prob": px if best_s == 'X' else max(p1, p2),
+                "quota": m.get(f'odds_{best_s.lower()}', 1.0), 
+                "combo": f"{combo} ({round(c_prob*100)}%)"
             })
 
     print(f"\n--- REPORT STATISTICO ANALISI ({len(results)} match) ---")
     print(f"Segni suggeriti: 1: {stats_log['1']} | X: {stats_log['X']} | 2: {stats_log['2']}")
     print(f"Combo suggerite: O 1.5: {stats_log['O 1.5']} | U 3.5: {stats_log['U 3.5']}\n")
 
-    # LOGICA DI SMISTAMENTO 10-4-4
-    fisse_12 = sorted([r for r in results if r['segno'] in ['1', '2']], key=lambda x: x[prob], reverse=True)
+    # LOGICA DI SMISTAMENTO CORRETTA
+    fisse_12 = sorted([r for r in results if r['segno'] in ['1', '2']], key=lambda x: x['prob'], reverse=True)
     fisse_x = sorted([r for r in results if r['segno'] == 'X'], key=lambda x: x['prob'], reverse=True)
     combo_under = sorted([r for r in results if "U 3.5" in r['combo']], key=lambda x: x['prob'], reverse=True)
 
-    # Selezione finale
+    # Selezione iniziale
     final_list = fisse_12[:10] + fisse_x[:4] + combo_under[:4]
     
-    # Se il totale è < 18, integriamo con le migliori fisse rimaste
+    # Riempimento se mancano elementi (evita duplicati usando i nomi dei match)
     if len(final_list) < 18:
-        already_in = [r['match'] for r in final_list]
-        remaining = sorted([r for r in results if r['match'] not in already_in], key=lambda x: x['prob'], reverse=True)
+        already_in_matches = {r['match'] for r in final_list}
+        remaining = sorted([r for r in results if r['match'] not in already_in_matches], key=lambda x: x['prob'], reverse=True)
         final_list += remaining[:(18 - len(final_list))]
 
     if not final_list:
