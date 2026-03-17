@@ -1,31 +1,37 @@
-name: Daily Betting Analysis
+name: 137BET Automation
 
 on:
   schedule:
-    - cron: '0 8 * * *' # Gira ogni giorno alle 8 di mattina
-  workflow_dispatch: # Ti permette di lanciarlo a mano quando vuoi
+    - cron: '0 9 * * *' # Gira ogni mattina alle 09:00 UTC
+  workflow_dispatch: # Permette l'avvio manuale
 
 jobs:
-  build:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: abc... # (setup python)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install numpy requests scipy supabase thefuzz python-Levenshtein
 
-      - name: Update Team Stats and Form
-        run: python update_teams.py # Fase 1: Aggiorna la forma
+      - name: Step 1 - Update Form Data
+        run: python update_teams.py
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          ...
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
 
-      - name: Run Analysis and Send Telegram
-        run: python bet_engine.py # Fase 2: Calcola e invia
+      - name: Step 2 - Run Dixon-Coles Analysis
+        run: python bet_engine.py
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          ...
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
