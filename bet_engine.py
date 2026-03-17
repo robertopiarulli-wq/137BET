@@ -43,10 +43,8 @@ def get_full_analysis(att_h, def_h, att_a, def_a):
             probs[i,j] = p_base * dixon_coles_tau(i, j, lam_h, lam_a, rho)
     
     probs /= probs.sum()
-    
     p1, px, p2 = np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1))
     
-    # Combo Larga
     p_u35 = sum(probs[i,j] for i in range(6) for j in range(6) if i+j <= 3)
     p_o15 = 1 - (probs[0,0] + probs[0,1] + probs[1,0])
     
@@ -76,10 +74,9 @@ def run_analysis():
             p1, px, p2, combo, c_prob = get_full_analysis(stats_map[h_res[0]]['avg_scored'], stats_map[h_res[0]]['avg_conceded'], 
                                                           stats_map[a_res[0]]['avg_scored'], stats_map[a_res[0]]['avg_conceded'])
             
-            # Segno: se la X è > 27% la forziamo per vederla, altrimenti il più probabile
+            # Segno: priorità alla X se sopra 27%, altrimenti il più probabile
             best_s = 'X' if px >= 0.27 else max([('1', p1), ('X', px), ('2', p2)], key=lambda x: x[1])[0]
             
-            # Aggiorna statistiche globali per il log
             stats_log[best_s] += 1
             stats_log[combo] += 1
 
@@ -89,21 +86,30 @@ def run_analysis():
                 "quota": m[f'odds_{best_s.lower()}'], "combo": f"{combo} ({round(c_prob*100)}%)"
             })
 
-    # --- LOG STATISTICO SU GITHUB ---
-    total_analyzed = len(results)
-    print(f"\n--- REPORT STATISTICO ANALISI ({total_analyzed} match) ---")
+    print(f"\n--- REPORT STATISTICO ANALISI ({len(results)} match) ---")
     print(f"Segni suggeriti: 1: {stats_log['1']} | X: {stats_log['X']} | 2: {stats_log['2']}")
-    print(f"Combo suggerite: O 1.5: {stats_log['O 1.5']} | U 3.5: {stats_log['U 3.5']}")
-    print("-------------------------------------------\n")
+    print(f"Combo suggerite: O 1.5: {stats_log['O 1.5']} | U 3.5: {stats_log['U 3.5']}\n")
 
-    candidates = sorted(results, key=lambda x: x['prob'], reverse=True)
+    # LOGICA DI SMISTAMENTO 10-4-4
+    fisse_12 = sorted([r for r in results if r['segno'] in ['1', '2']], key=lambda x: x[prob], reverse=True)
+    fisse_x = sorted([r for r in results if r['segno'] == 'X'], key=lambda x: x['prob'], reverse=True)
+    combo_under = sorted([r for r in results if "U 3.5" in r['combo']], key=lambda x: x['prob'], reverse=True)
+
+    # Selezione finale
+    final_list = fisse_12[:10] + fisse_x[:4] + combo_under[:4]
     
-    if not candidates:
+    # Se il totale è < 18, integriamo con le migliori fisse rimaste
+    if len(final_list) < 18:
+        already_in = [r['match'] for r in final_list]
+        remaining = sorted([r for r in results if r['match'] not in already_in], key=lambda x: x['prob'], reverse=True)
+        final_list += remaining[:(18 - len(final_list))]
+
+    if not final_list:
         send_telegram_msg("⚠️ Nessun match trovato.")
         return
 
-    msg = "🔬 *ANALISI DIXON-COLES (TOP 15)*\n\n"
-    for b in candidates[:15]:
+    msg = "🔬 *DIXON-COLES MIX (10+4+4)*\n\n"
+    for b in final_list:
         msg += (f"📅 {format_date(b['date'])}\n"
                 f"🏟 {b['match']}\n"
                 f"🎯 Fissa: *{b['segno']}* @{b['quota']}\n"
