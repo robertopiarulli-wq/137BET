@@ -2,8 +2,9 @@ name: 137BET Automation
 
 on:
   schedule:
-    - cron: '0 9 * * *' # Gira ogni mattina alle 09:00 UTC
-  workflow_dispatch: # Permette l'avvio manuale
+    # 08:00 UTC corrisponde alle 09:00 in Italia (con ora solare)
+    - cron: '0 8 * * *'
+  workflow_dispatch: # Questo pulsante DEVE esserci per i test manuali
 
 jobs:
   run-bot:
