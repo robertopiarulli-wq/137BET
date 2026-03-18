@@ -2,9 +2,9 @@ name: 137BET Automation
 
 on:
   schedule:
-    # 08:00 UTC corrisponde alle 09:00 in Italia (con ora solare)
+    # Gira ogni mattina alle 08:00 UTC (09:00 ora italiana)
     - cron: '0 8 * * *'
-  workflow_dispatch: # Questo pulsante DEVE esserci per i test manuali
+  workflow_dispatch: # Permette il lancio manuale per i test
 
 jobs:
   run-bot:
@@ -36,3 +36,5 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+# update cron test - forza il refresh del trigger
