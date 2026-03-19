@@ -2,19 +2,19 @@ name: 137BET Automation
 
 on:
   schedule:
-    # Gira ogni mattina alle 08:00 UTC (09:00 ora italiana)
     - cron: '0 8 * * *'
-  workflow_dispatch: # Permette il lancio manuale per i test
+  workflow_dispatch: 
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # <--- EVITA SPRECO DI MINUTI SE IL CODICE SI BLOCCA
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 
         with:
           python-version: '3.9'
 
@@ -37,4 +37,4 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-# update cron test - forza il refresh del trigger
+# update cron test - Versione Gold 2.1 (Anti-Freeze)
