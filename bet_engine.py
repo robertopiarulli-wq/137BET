@@ -69,19 +69,21 @@ def run_analysis():
     team_names_list = list(stats_map.keys())
 
     now = datetime.now(timezone.utc)
-    limit_date = now + timedelta(hours=120)
+    limit_date = now + timedelta(hours=168) # ESTESO A 7 GIORNI
     results = []
     
     print(f"🧐 Database: {len(matches)} match totali.")
     analizzati = 0
+    scartati_nomi = 0
     
     for m in matches:
         match_time = datetime.fromisoformat(m['match_date'].replace('Z', '+00:00'))
         if match_time < now or match_time > limit_date: continue
 
         analizzati += 1
-        h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=70)
-        a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=70)
+        # SOGLIA ABBASSATA A 60 PER MAGGIORE FLESSIBILITÀ
+        h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=60)
+        a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=60)
 
         if h_res and a_res:
             p1, px, p2, combo, c_prob = get_full_analysis(stats_map[h_res[0]], stats_map[a_res[0]])
@@ -95,8 +97,11 @@ def run_analysis():
                 "combo": combo,
                 "c_prob": c_prob
             })
+        else:
+            scartati_nomi += 1
+            print(f"⚠️ Match scartato per mancata corrispondenza nomi: {m['home_team_name']} vs {m['away_team_name']}")
 
-    # SMISTAMENTO 10-4-4 (SENZA DUPLICATI)
+    # SMISTAMENTO 10-4-4
     f_12 = sorted([r for r in results if r['segno'] in ['1', '2']], key=lambda x: x['prob'], reverse=True)[:10]
     f_x = sorted([r for r in results if r['segno'] == 'X'], key=lambda x: x['prob'], reverse=True)[:4]
     
@@ -105,7 +110,9 @@ def run_analysis():
                  key=lambda x: x['c_prob'], reverse=True)[:4]
     
     final_list = f_12 + f_x + f_u
-    if not final_list: return
+    if not final_list: 
+        print("ℹ️ Nessun match trovato dopo i filtri.")
+        return
 
     # --- CALCOLO RIEPILOGO STATISTICO ---
     c1 = sum(1 for r in final_list if r['segno'] == '1')
@@ -115,8 +122,8 @@ def run_analysis():
     co = sum(1 for r in final_list if "O 1.5" in r['combo'])
 
     # --- COSTRUZIONE MESSAGGIO ---
-    msg = "🚀 *137BET - DIXON-COLES REPORT*\n"
-    msg += f"📊 Analizzati: {analizzati} | Selezionati: {len(final_list)}\n"
+    msg = "🚀 *137BET - POWER REPORT*\n"
+    msg += f"📊 Range: 7gg | Analizzati: {analizzati} | Scartati Nomi: {scartati_nomi}\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n"
     msg += f"✅ **RIEPILOGO SEGNI:**\n"
     msg += f"▫️ Segno 1: {c1} | Segno X: {cx} | Segno 2: {c2}\n"
@@ -124,14 +131,15 @@ def run_analysis():
     msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for b in final_list:
+        # Aggiunta la probabilità anche alla fissa
         msg += (f"📅 {format_date(b['date'])}\n"
                 f"🏟 {b['match']}\n"
-                f"🎯 Fissa: *{b['segno']}* @{b['quota']}\n"
+                f"🎯 Fissa: *{b['segno']}* @{b['quota']} ({round(b['prob']*100)}%)\n"
                 f"🛡 Combo: *{b['combo']}* ({round(b['c_prob']*100)}%)\n"
                 f"────────────────\n")
     
     send_telegram_msg(msg)
-    print(f"✅ Analisi completata. Inviati {len(final_list)} match su {analizzati} analizzati.")
+    print(f"✅ Analisi completata. Inviati {len(final_list)} match. Scartati per nomi: {scartati_nomi}")
 
 if __name__ == "__main__":
     run_analysis()
