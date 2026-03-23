@@ -18,7 +18,8 @@ def send_telegram_msg(message):
 
 def format_date(iso_date):
     try:
-        dt = datetime.fromisoformat(iso_date.replace('Z', '+00:00'))
+        # Pulizia per la visualizzazione nel messaggio
+        dt = datetime.fromisoformat(iso_date.replace('Z', '+00:00').replace(' ', 'T'))
         return dt.strftime("%d/%m %H:%M")
     except: return "N.D."
 
@@ -60,7 +61,10 @@ def get_full_analysis(team_h, team_a):
     
     # LOGICA RICHIESTA: U/O basato su xG totali
     combo = "U 3.5" if total_xg < 2.5 else "O 1.5"
-    c_prob = sum(probs[i,j] for i in range(6) for j in range(6) if (i+j <= 3 if combo == "U 3.5" else i+j >= 2))
+    if combo == "U 3.5":
+        c_prob = sum(probs[i,j] for i in range(6) for j in range(6) if i+j <= 3)
+    else:
+        c_prob = sum(probs[i,j] for i in range(6) for j in range(6) if i+j >= 2)
     
     # LOGICA BTTS: xG Casa e Fuori > 1.15
     btts = "SÌ" if (lam_h > 1.15 and lam_a > 1.15) else "NO"
@@ -76,16 +80,23 @@ def run_analysis():
     team_names_list = list(stats_map.keys())
 
     now = datetime.now(timezone.utc)
-    limit_date = now + timedelta(hours=168) 
+    limit_date = now + timedelta(hours=168) # 7 Giorni
     results = []
     
     print(f"🧐 Database: {len(matches)} match totali.")
     
     for m in matches:
-        # Pulizia data per confronto
-        m_date_str = m['match_date'].replace(' ', 'T').replace('Z', '') + '+00:00'
-        match_time = datetime.fromisoformat(m_date_str)
+        # FIX DATA: Gestione sicura del formato ISO
+        m_date_str = m['match_date'].replace(' ', 'T').replace('Z', '')
+        if '+' not in m_date_str:
+            m_date_str += '+00:00'
         
+        try:
+            match_time = datetime.fromisoformat(m_date_str)
+        except ValueError:
+            print(f"⚠️ Formato data non riconosciuto per {m['home_team_name']}")
+            continue
+            
         if match_time < now or match_time > limit_date:
             continue
 
@@ -105,28 +116,27 @@ def run_analysis():
                 "btts": btts, "b_prob": b_prob
             })
         else:
-            print(f"⚠️ Nomi non trovati: {m['home_team_name']} o {m['away_team_name']}")
+            print(f"⚠️ Nomi non accoppiati: {m['home_team_name']} | {m['away_team_name']}")
 
     if not results:
-        print("❌ Nessun match ha superato i filtri data/nomi.")
+        print("ℹ️ Nessun match trovato nel raggio di 7 giorni (Pausa Nazionali?).")
         return
 
-    # SMISTAMENTO 10-4-4
+    # SMISTAMENTO 10-4
     f_12 = sorted([r for r in results if r['segno'] in ['1', '2']], key=lambda x: x['prob'], reverse=True)[:10]
     f_x = sorted([r for r in results if r['segno'] == 'X'], key=lambda x: x['prob'], reverse=True)[:4]
     
     final_list = f_12 + f_x
-    if not final_list: return
 
     # --- COSTRUZIONE MESSAGGIO ---
     msg = "🚀 *137BET - POWER REPORT xG*\n"
-    msg += f"📊 Match analizzati: {len(results)}\n"
+    msg += f"📊 Range: 7gg | Analizzati: {len(results)}\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for b in final_list:
         msg += (f"📅 {format_date(b['date'])}\n"
                 f"🏟 {b['match']}\n"
-                f"🎯 Fissa: *{b['segno']}* ({round(b['prob']*100)}%)\n"
+                f"🎯 Fissa: *{b['segno']}* @{b['quota']} ({round(b['prob']*100)}%)\n"
                 f"🛡 Combo: *{b['combo']}* ({round(b['c_prob']*100)}%)\n"
                 f"💎 BTTS: *{b['btts']}* ({round(b['b_prob']*100)}%)\n"
                 f"────────────────\n")
