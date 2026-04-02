@@ -18,7 +18,6 @@ def send_telegram_msg(message):
 
 def format_date(iso_date):
     try:
-        # Pulizia per la visualizzazione nel messaggio
         dt = datetime.fromisoformat(iso_date.replace('Z', '+00:00').replace(' ', 'T'))
         return dt.strftime("%d/%m %H:%M")
     except: return "N.D."
@@ -47,8 +46,6 @@ def get_full_analysis(team_h, team_a):
     lam_a = (team_a['avg_scored'] * f_a) * (team_h['avg_conceded'] / f_h) * 0.92 * avg_goals
     
     total_xg = lam_h + lam_a
-    
-    # MATRICE PROBABILITÀ
     rho = -0.20 
     probs = np.zeros((6, 6))
     for i in range(6):
@@ -59,14 +56,9 @@ def get_full_analysis(team_h, team_a):
     probs /= probs.sum()
     p1, px, p2 = np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1))
     
-    # LOGICA RICHIESTA: U/O basato su xG totali
     combo = "U 3.5" if total_xg < 2.5 else "O 1.5"
-    if combo == "U 3.5":
-        c_prob = sum(probs[i,j] for i in range(6) for j in range(6) if i+j <= 3)
-    else:
-        c_prob = sum(probs[i,j] for i in range(6) for j in range(6) if i+j >= 2)
+    c_prob = sum(probs[i,j] for i in range(6) for j in range(6) if (i+j <= 3 if combo == "U 3.5" else i+j >= 2))
     
-    # LOGICA BTTS: xG Casa e Fuori > 1.15
     btts = "SÌ" if (lam_h > 1.15 and lam_a > 1.15) else "NO"
     b_prob = 1 - (np.sum(probs[0, :]) + np.sum(probs[:, 0]) - probs[0,0])
 
@@ -80,30 +72,34 @@ def run_analysis():
     team_names_list = list(stats_map.keys())
 
     now = datetime.now(timezone.utc)
-    limit_date = now + timedelta(hours=168) # 7 Giorni
+    limit_date = now + timedelta(hours=168) 
     results = []
     
-    print(f"🧐 Database: {len(matches)} match totali.")
+    # NUOVI CONTATORI PER IL CHECK
+    nel_periodo = 0
+    nomi_ok = 0
+    scartati_per_nomi = []
+    
+    print(f"🧐 DATABASE: {len(matches)} match totali trovati.")
     
     for m in matches:
-        # FIX DATA: Gestione sicura del formato ISO
         m_date_str = m['match_date'].replace(' ', 'T').replace('Z', '')
-        if '+' not in m_date_str:
-            m_date_str += '+00:00'
+        if '+' not in m_date_str: m_date_str += '+00:00'
         
         try:
             match_time = datetime.fromisoformat(m_date_str)
-        except ValueError:
-            print(f"⚠️ Formato data non riconosciuto per {m['home_team_name']}")
-            continue
+        except: continue
             
         if match_time < now or match_time > limit_date:
             continue
+
+        nel_periodo += 1 # Match che ricadono nei 7 giorni
 
         h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=60)
         a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=60)
 
         if h_res and a_res:
+            nomi_ok += 1
             p1, px, p2, combo, c_prob, btts, b_prob = get_full_analysis(stats_map[h_res[0]], stats_map[a_res[0]])
             best_s = 'X' if px >= 0.27 else max([('1', p1), ('X', px), ('2', p2)], key=lambda x: x[1])[0]
             
@@ -116,21 +112,25 @@ def run_analysis():
                 "btts": btts, "b_prob": b_prob
             })
         else:
-            print(f"⚠️ Nomi non accoppiati: {m['home_team_name']} | {m['away_team_name']}")
+            scartati_per_nomi.append(f"{m['home_team_name']} vs {m['away_team_name']}")
+
+    # STAMPA DIAGNOSTICA NEL LOG
+    print(f"📅 MATCH NEI PROSSIMI 7GG: {nel_periodo}")
+    print(f"✅ MATCH CON NOMI RICONOSCIUTI: {nomi_ok}")
+    if scartati_per_nomi:
+        print(f"⚠️ MATCH SCARTATI PER NOMI ({len(scartati_per_nomi)}):")
+        for s in scartati_per_nomi: print(f"   - {s}")
 
     if not results:
-        print("ℹ️ Nessun match trovato nel raggio di 7 giorni (Pausa Nazionali?).")
+        print("ℹ️ Fine analisi: nessun match ha superato i filtri.")
         return
 
-    # SMISTAMENTO 10-4
     f_12 = sorted([r for r in results if r['segno'] in ['1', '2']], key=lambda x: x['prob'], reverse=True)[:10]
     f_x = sorted([r for r in results if r['segno'] == 'X'], key=lambda x: x['prob'], reverse=True)[:4]
-    
     final_list = f_12 + f_x
 
-    # --- COSTRUZIONE MESSAGGIO ---
     msg = "🚀 *137BET - POWER REPORT xG*\n"
-    msg += f"📊 Range: 7gg | Analizzati: {len(results)}\n"
+    msg += f"📊 Match Analizzabili: {nomi_ok} | Inviati: {len(final_list)}\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for b in final_list:
