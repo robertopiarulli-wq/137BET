@@ -22,7 +22,32 @@ def format_date(iso_date):
         return dt.strftime("%d/%m %H:%M")
     except: return "N.D."
 
-# --- LOGICA MATEMATICA ---
+# --- LOGICA MATEMATICA AVANZATA ---
+
+def get_league_rho(league_code):
+    """Punto 1: Rho dinamico per campionato"""
+    rho_map = {
+        'SA': -0.25,  # Più pareggi tattici
+        'FL1': -0.25,
+        'PL': -0.12,  # Più spettacolo/gol
+        'BL1': -0.12,
+        'PD': -0.18   # Standard
+    }
+    return rho_map.get(league_code, -0.20)
+
+def get_motivation_factor(team_data):
+    """Punto 2: Fattore Motivazione basato sulla forma e contesto"""
+    # Se non abbiamo dati sulla forma, restiamo neutri
+    if not team_data.get('recent_form'): return 1.0
+    
+    # Esempio logica: Se una squadra ha fatto pochi punti ma è un top team (potenziale),
+    # o se è in lotta retrocessione (fame), alziamo leggermente la determinazione.
+    # Per ora usiamo un moltiplicatore basato sulla densità della forma recente
+    form = team_data['recent_form'].replace(',', '')[-3:] # Ultime 3
+    if 'W' in form: return 1.05 # Boost fiducia
+    if 'L' in form and len(set(form)) == 1: return 0.95 # Crisi nera
+    return 1.0
+
 def get_form_multiplier(form_string):
     if not form_string or form_string == 'DDDDD': return 1.0
     form = form_string.replace(',', '')[-5:].upper()
@@ -37,16 +62,21 @@ def dixon_coles_tau(i, j, lam_h, lam_a, rho):
     if i == 1 and j == 1: return 1 - rho
     return 1.0
 
-def get_full_analysis(team_h, team_a):
+def get_full_analysis(team_h, team_a, league_code):
     f_h = get_form_multiplier(team_h.get('recent_form'))
     f_a = get_form_multiplier(team_a.get('recent_form'))
     
+    # Integrazione Motivazione
+    m_h = get_motivation_factor(team_h)
+    m_a = get_motivation_factor(team_a)
+    
     avg_goals = 1.25 
-    lam_h = (team_h['avg_scored'] * f_h) * (team_a['avg_conceded'] / f_a) * 1.12 * avg_goals
-    lam_a = (team_a['avg_scored'] * f_a) * (team_h['avg_conceded'] / f_h) * 0.92 * avg_goals
+    lam_h = (team_h['avg_scored'] * f_h * m_h) * (team_a['avg_conceded'] / f_a) * 1.12 * avg_goals
+    lam_a = (team_a['avg_scored'] * f_a * m_a) * (team_h['avg_conceded'] / f_h) * 0.92 * avg_goals
     
     total_xg = lam_h + lam_a
-    rho = -0.20 
+    rho = get_league_rho(league_code) # Rho Dinamico
+    
     probs = np.zeros((6, 6))
     for i in range(6):
         for j in range(6):
@@ -75,10 +105,8 @@ def run_analysis():
     limit_date = now + timedelta(hours=168) 
     results = []
     
-    # NUOVI CONTATORI PER IL CHECK
     nel_periodo = 0
     nomi_ok = 0
-    scartati_per_nomi = []
     
     print(f"🧐 DATABASE: {len(matches)} match totali trovati.")
     
@@ -93,14 +121,20 @@ def run_analysis():
         if match_time < now or match_time > limit_date:
             continue
 
-        nel_periodo += 1 # Match che ricadono nei 7 giorni
+        nel_periodo += 1
 
         h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=60)
         a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=60)
 
         if h_res and a_res:
             nomi_ok += 1
-            p1, px, p2, combo, c_prob, btts, b_prob = get_full_analysis(stats_map[h_res[0]], stats_map[a_res[0]])
+            # Passiamo anche il league_code per il Rho dinamico
+            p1, px, p2, combo, c_prob, btts, b_prob = get_full_analysis(
+                stats_map[h_res[0]], 
+                stats_map[a_res[0]], 
+                m.get('league_code', 'Standard')
+            )
+            
             best_s = 'X' if px >= 0.27 else max([('1', p1), ('X', px), ('2', p2)], key=lambda x: x[1])[0]
             
             results.append({
@@ -111,15 +145,6 @@ def run_analysis():
                 "combo": combo, "c_prob": c_prob,
                 "btts": btts, "b_prob": b_prob
             })
-        else:
-            scartati_per_nomi.append(f"{m['home_team_name']} vs {m['away_team_name']}")
-
-    # STAMPA DIAGNOSTICA NEL LOG
-    print(f"📅 MATCH NEI PROSSIMI 7GG: {nel_periodo}")
-    print(f"✅ MATCH CON NOMI RICONOSCIUTI: {nomi_ok}")
-    if scartati_per_nomi:
-        print(f"⚠️ MATCH SCARTATI PER NOMI ({len(scartati_per_nomi)}):")
-        for s in scartati_per_nomi: print(f"   - {s}")
 
     if not results:
         print("ℹ️ Fine analisi: nessun match ha superato i filtri.")
@@ -129,8 +154,9 @@ def run_analysis():
     f_x = sorted([r for r in results if r['segno'] == 'X'], key=lambda x: x['prob'], reverse=True)[:4]
     final_list = f_12 + f_x
 
-    msg = "🚀 *137BET - POWER REPORT xG*\n"
+    msg = "🚀 *137BET - POWER REPORT xG V10*\n"
     msg += f"📊 Match Analizzabili: {nomi_ok} | Inviati: {len(final_list)}\n"
+    msg += f"🏟 _Logica: Rho Dinamico + Fattore Motivazione_\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for b in final_list:
@@ -142,7 +168,7 @@ def run_analysis():
                 f"────────────────\n")
     
     send_telegram_msg(msg)
-    print(f"✅ Analisi completata. Inviati {len(final_list)} match.")
+    print(f"✅ Analisi V10 completata. Inviati {len(final_list)} match.")
 
 if __name__ == "__main__":
     run_analysis()
