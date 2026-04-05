@@ -22,16 +22,38 @@ def format_date(iso_date):
         return dt.strftime("%d/%m %H:%M")
     except: return "N.D."
 
-# --- LOGICA QUANTISTICA V15.1 (CORRETTA) ---
+# --- LOGICA DI MOMENTUM (NEW V16.0) ---
 
-def get_pauli_v15(team_h, team_a):
+def get_momentum_weight(form_string):
+    """Calcola un moltiplicatore basato sulle ultime 5 partite (W=3, D=1, L=0)"""
+    if not form_string: return 1.0
+    
+    # Pulizia stringa (prende solo le ultime 5 gare)
+    clean_form = form_string.replace(',', '')[-5:]
+    points = 0
+    for char in clean_form:
+        if char == 'W': points += 3
+        elif char == 'D': points += 1
+    
+    # Media neutra = 7.5 punti (3 pareggi e 1 vittoria e 1 sconfitta o simili)
+    # Range peso: da 0.85 (tutte perse) a 1.15 (tutte vinte)
+    weight = 1 + (points - 7.5) / 50
+    return round(weight, 3)
+
+# --- LOGICA QUANTISTICA V16.0 ---
+
+def get_pauli_v16(team_h, team_a):
     alpha = 1 / 137.036
     sigma = alpha ** 2
     pauli_threshold = 137 * sigma   
     x_pure_threshold = 0.8 * sigma  
     
-    impact_h = team_h['avg_scored'] * team_a['avg_conceded']
-    impact_a = team_a['avg_scored'] * team_h['avg_conceded']
+    # Integriamo il Momentum nell'impatto quantistico
+    m_h = get_momentum_weight(team_h.get('recent_form', 'DDDDD'))
+    m_a = get_momentum_weight(team_a.get('recent_form', 'DDDDD'))
+    
+    impact_h = (team_h['avg_scored'] * team_a['avg_conceded']) * m_h
+    impact_a = (team_a['avg_scored'] * team_h['avg_conceded']) * m_a
     pauli_p = (impact_h * impact_a) * sigma * 1000
     
     x_boost, exclusion = 1.0, None
@@ -52,12 +74,18 @@ def get_pauli_v15(team_h, team_a):
         
     return round(pauli_p, 6), e_level, advice, x_boost, exclusion
 
-def get_full_analysis_v15(team_h, team_a):
-    avg = 1.25
-    lam_h = team_h['avg_scored'] * (team_a['avg_conceded'] / 1.0) * 1.15 * avg
-    lam_a = team_a['avg_scored'] * (team_h['avg_conceded'] / 1.0) * 0.90 * avg
+def get_full_analysis_v16(team_h, team_a):
+    avg_global = 1.25
     
-    _, _, _, x_boost, exclusion = get_pauli_v15(team_h, team_a)
+    # Calcolo Momentum
+    m_h = get_momentum_weight(team_h.get('recent_form', 'DDDDD'))
+    m_a = get_momentum_weight(team_a.get('recent_form', 'DDDDD'))
+    
+    # Lambda corretti per Momentum e Potenza Leghe
+    lam_h = (team_h['avg_scored'] * team_a['avg_conceded']) * 1.15 * avg_global * m_h
+    lam_a = (team_a['avg_scored'] * team_h['avg_conceded']) * 0.90 * avg_global * m_a
+    
+    _, _, _, x_boost, exclusion = get_pauli_v16(team_h, team_a)
     
     probs = np.zeros((6, 6))
     for i in range(6):
@@ -71,7 +99,7 @@ def get_full_analysis_v15(team_h, team_a):
     probs /= probs.sum()
     return np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1))
 
-# --- ENGINE DI ANALISI V15.1 CON STORICO ---
+# --- ENGINE DI ANALISI V16.0 ---
 
 def run_analysis():
     matches = supabase.table("matches").select("*").execute().data
@@ -98,16 +126,16 @@ def run_analysis():
 
         if h_res and a_res:
             t_h, t_a = stats_map[h_res[0]], stats_map[a_res[0]]
-            
             if t_h['avg_scored'] == 0 or t_a['avg_scored'] == 0: continue
 
-            p1, px, p2 = get_full_analysis_v15(t_h, t_a)
-            pauli_p, level, advice, _, _ = get_pauli_v15(t_h, t_a)
+            # Analisi potenziata V16
+            p1, px, p2 = get_full_analysis_v16(t_h, t_a)
+            pauli_p, level, advice, _, _ = get_pauli_v16(t_h, t_a)
             
             best_s = max([('1', p1), ('X', px), ('2', p2)], key=lambda x: x[1])[0]
             prob_final = px if best_s == 'X' else max(p1, p2)
             
-            # --- SALVATAGGIO SU SUPABASE PER IL TRACKING ---
+            # Salvataggio su Supabase
             try:
                 supabase.table("predictions_history").insert({
                     "match_name": f"{m['home_team_name']} vs {m['away_team_name']}",
@@ -118,7 +146,6 @@ def run_analysis():
                 }).execute()
             except Exception as e:
                 print(f"Errore salvataggio storico: {e}")
-            # -----------------------------------------------
             
             results.append({
                 "match": f"{m['home_team_name']} vs {m['away_team_name']}",
@@ -127,22 +154,29 @@ def run_analysis():
                 "prob": prob_final,
                 "pauli_p": pauli_p, 
                 "advice": advice,
-                "level": level
+                "level": level,
+                "m_h": get_momentum_weight(t_h.get('recent_form', 'DDDDD')),
+                "m_a": get_momentum_weight(t_a.get('recent_form', 'DDDDD'))
             })
 
     if not results: return
 
     final_list = sorted(results, key=lambda x: x['prob'], reverse=True)
     
-    msg = "🚀 *137BET V15.1 - QUANTUM STREAM*\n"
-    msg += "⚛️ _Fix Polarità + Matching 48h_\n"
+    msg = "🚀 *137BET V16.0 - MOMENTUM EDITION*\n"
+    msg += "⚛️ _Forma 5 Gare + Analisi Quantistica_\n"
     msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for b in final_list:
+        # Aggiungiamo un piccolo indicatore visivo del momentum
+        h_boost = "📈" if b['m_h'] > 1 else "📉" if b['m_h'] < 1 else "➖"
+        a_boost = "📈" if b['m_a'] > 1 else "📉" if b['m_a'] < 1 else "➖"
+        
         msg += (f"🕒 {b['time']} - {b['match']}\n"
+                f"📊 Form: Casa {h_boost} | Ospiti {a_boost}\n"
                 f"🎯 Segno: *{b['segno']}* ({round(b['prob']*100)}%)\n"
                 f"🛡 Pauli: `{b['advice']}`\n"
-                f"💠 P: `{b['pauli_p']}` | `{b['level']}`\n"
+                f"💠 P: `{b['pauli_p']}`\n"
                 f"────────────────\n")
     
     send_telegram_msg(msg)
