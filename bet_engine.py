@@ -40,7 +40,6 @@ def get_pauli_v15(team_h, team_a):
         e_level, advice, x_boost = "INDISTINGUIBILE (X PURA)", "RISONANZA: X ALTA", 1.75
     elif pauli_p > pauli_threshold:
         e_level = "ECCITATO (ESCLUSIONE)"
-        # FIX POLARITÀ: Se la casa è più forte (impact_h > impact_a), escludiamo il segno 2
         if impact_h > impact_a:
             exclusion = "2"
             advice = "ESCLUSO SEGNO 2"
@@ -64,7 +63,6 @@ def get_full_analysis_v15(team_h, team_a):
     for i in range(6):
         for j in range(6):
             p = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
-            # Salto Quantistico: Svuotamento stati proibiti (Vittoria di chi è escluso)
             if exclusion == "2" and j > i: p *= 0.03 
             if exclusion == "1" and i > j: p *= 0.03 
             if i == j: p *= x_boost
@@ -73,7 +71,7 @@ def get_full_analysis_v15(team_h, team_a):
     probs /= probs.sum()
     return np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1))
 
-# --- ENGINE DI ANALISI V15.1 ---
+# --- ENGINE DI ANALISI V15.1 CON STORICO ---
 
 def run_analysis():
     matches = supabase.table("matches").select("*").execute().data
@@ -82,7 +80,6 @@ def run_analysis():
     team_names_list = list(stats_map.keys())
 
     now = datetime.now(timezone.utc)
-    # FINESTRA 48 ORE: Per evitare buchi di fuso orario
     start_target = now - timedelta(hours=6)
     end_target = now + timedelta(hours=42)
     
@@ -96,14 +93,12 @@ def run_analysis():
         
         if not (start_target <= match_time <= end_target): continue
 
-        # MATCHING MORBIDO (60) per includere più squadre delle serie B
         h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=60)
         a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=60)
 
         if h_res and a_res:
             t_h, t_a = stats_map[h_res[0]], stats_map[a_res[0]]
             
-            # Salto squadre con dati incompleti
             if t_h['avg_scored'] == 0 or t_a['avg_scored'] == 0: continue
 
             p1, px, p2 = get_full_analysis_v15(t_h, t_a)
@@ -111,6 +106,19 @@ def run_analysis():
             
             best_s = max([('1', p1), ('X', px), ('2', p2)], key=lambda x: x[1])[0]
             prob_final = px if best_s == 'X' else max(p1, p2)
+            
+            # --- SALVATAGGIO SU SUPABASE PER IL TRACKING ---
+            try:
+                supabase.table("predictions_history").insert({
+                    "match_name": f"{m['home_team_name']} vs {m['away_team_name']}",
+                    "match_date": m['match_date'],
+                    "predicted_sign": best_s,
+                    "probability": round(float(prob_final), 4),
+                    "pauli_p": float(pauli_p)
+                }).execute()
+            except Exception as e:
+                print(f"Errore salvataggio storico: {e}")
+            # -----------------------------------------------
             
             results.append({
                 "match": f"{m['home_team_name']} vs {m['away_team_name']}",
@@ -124,7 +132,6 @@ def run_analysis():
 
     if not results: return
 
-    # Ordinamento Integrale per Probabilità
     final_list = sorted(results, key=lambda x: x['prob'], reverse=True)
     
     msg = "🚀 *137BET V15.1 - QUANTUM STREAM*\n"
