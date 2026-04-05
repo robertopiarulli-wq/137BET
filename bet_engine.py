@@ -22,30 +22,41 @@ def format_date(iso_date):
         return dt.strftime("%d/%m %H:%M")
     except: return "N.D."
 
-# --- LOGICA MATEMATICA AVANZATA ---
+# --- LOGICA MATEMATICA AVANZATA (V11 QUANTUM) ---
+
+def get_alpha_divergence(team_h, team_a, book_odd):
+    """
+    Calcola la divergenza basata sulla Costante di Struttura Fine (Alpha)
+    Formula: P = 1 / (1 + e^-(alpha * delta_rating + beta))
+    """
+    if book_odd <= 1.0: return 0, False
+    
+    alpha = 1 / 137.036
+    # Usiamo la differenza di media gol pesata come 'rating'
+    rating_h = team_h['avg_scored'] - team_h['avg_conceded']
+    rating_a = team_a['avg_scored'] - team_a['avg_conceded']
+    delta_rating = (rating_h - rating_a) * 100 # Scaliamo per rendere sensibile l'esponente
+    
+    beta = 0.12 # Bias per il vantaggio casa
+    
+    p_quantum = 1 / (1 + np.exp(-(alpha * delta_rating + beta)))
+    p_book = 1 / book_odd
+    
+    divergenza = p_quantum - p_book
+    # Alert se la nostra probabilità fisica è superiore al bookmaker di oltre il 7%
+    is_value = divergenza > 0.07 
+    
+    return round(p_quantum * 100), is_value
 
 def get_league_rho(league_code):
-    """Punto 1: Rho dinamico per campionato"""
-    rho_map = {
-        'SA': -0.25,  # Più pareggi tattici
-        'FL1': -0.25,
-        'PL': -0.12,  # Più spettacolo/gol
-        'BL1': -0.12,
-        'PD': -0.18   # Standard
-    }
+    rho_map = {'SA': -0.25, 'FL1': -0.25, 'PL': -0.12, 'BL1': -0.12, 'PD': -0.18}
     return rho_map.get(league_code, -0.20)
 
 def get_motivation_factor(team_data):
-    """Punto 2: Fattore Motivazione basato sulla forma e contesto"""
-    # Se non abbiamo dati sulla forma, restiamo neutri
     if not team_data.get('recent_form'): return 1.0
-    
-    # Esempio logica: Se una squadra ha fatto pochi punti ma è un top team (potenziale),
-    # o se è in lotta retrocessione (fame), alziamo leggermente la determinazione.
-    # Per ora usiamo un moltiplicatore basato sulla densità della forma recente
-    form = team_data['recent_form'].replace(',', '')[-3:] # Ultime 3
-    if 'W' in form: return 1.05 # Boost fiducia
-    if 'L' in form and len(set(form)) == 1: return 0.95 # Crisi nera
+    form = team_data['recent_form'].replace(',', '')[-3:]
+    if 'W' in form: return 1.05
+    if 'L' in form and len(set(form)) == 1: return 0.95
     return 1.0
 
 def get_form_multiplier(form_string):
@@ -65,8 +76,6 @@ def dixon_coles_tau(i, j, lam_h, lam_a, rho):
 def get_full_analysis(team_h, team_a, league_code):
     f_h = get_form_multiplier(team_h.get('recent_form'))
     f_a = get_form_multiplier(team_a.get('recent_form'))
-    
-    # Integrazione Motivazione
     m_h = get_motivation_factor(team_h)
     m_a = get_motivation_factor(team_a)
     
@@ -75,7 +84,7 @@ def get_full_analysis(team_h, team_a, league_code):
     lam_a = (team_a['avg_scored'] * f_a * m_a) * (team_h['avg_conceded'] / f_h) * 0.92 * avg_goals
     
     total_xg = lam_h + lam_a
-    rho = get_league_rho(league_code) # Rho Dinamico
+    rho = get_league_rho(league_code)
     
     probs = np.zeros((6, 6))
     for i in range(6):
@@ -88,7 +97,6 @@ def get_full_analysis(team_h, team_a, league_code):
     
     combo = "U 3.5" if total_xg < 2.5 else "O 1.5"
     c_prob = sum(probs[i,j] for i in range(6) for j in range(6) if (i+j <= 3 if combo == "U 3.5" else i+j >= 2))
-    
     btts = "SÌ" if (lam_h > 1.15 and lam_a > 1.15) else "NO"
     b_prob = 1 - (np.sum(probs[0, :]) + np.sum(probs[:, 0]) - probs[0,0])
 
@@ -105,70 +113,60 @@ def run_analysis():
     limit_date = now + timedelta(hours=168) 
     results = []
     
-    nel_periodo = 0
-    nomi_ok = 0
-    
     print(f"🧐 DATABASE: {len(matches)} match totali trovati.")
     
     for m in matches:
         m_date_str = m['match_date'].replace(' ', 'T').replace('Z', '')
         if '+' not in m_date_str: m_date_str += '+00:00'
-        
         try:
             match_time = datetime.fromisoformat(m_date_str)
         except: continue
-            
-        if match_time < now or match_time > limit_date:
-            continue
-
-        nel_periodo += 1
+        if match_time < now or match_time > limit_date: continue
 
         h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=60)
         a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=60)
 
         if h_res and a_res:
-            nomi_ok += 1
-            # Passiamo anche il league_code per il Rho dinamico
             p1, px, p2, combo, c_prob, btts, b_prob = get_full_analysis(
-                stats_map[h_res[0]], 
-                stats_map[a_res[0]], 
-                m.get('league_code', 'Standard')
+                stats_map[h_res[0]], stats_map[a_res[0]], m.get('league_code', 'Standard')
             )
             
             best_s = 'X' if px >= 0.27 else max([('1', p1), ('X', px), ('2', p2)], key=lambda x: x[1])[0]
+            odd_value = m.get(f'odds_{best_s.lower()}', 1.0)
+            
+            # CALCOLO DIVERGENZA 137
+            p_quantum, is_divergent = get_alpha_divergence(stats_map[h_res[0]], stats_map[a_res[0]], odd_value)
             
             results.append({
                 "match": f"{m['home_team_name']} vs {m['away_team_name']}",
                 "date": m['match_date'], "segno": best_s, 
                 "prob": px if best_s == 'X' else max(p1, p2),
-                "quota": m.get(f'odds_{best_s.lower()}', 1.0),
-                "combo": combo, "c_prob": c_prob,
-                "btts": btts, "b_prob": b_prob
+                "quota": odd_value, "combo": combo, "c_prob": c_prob,
+                "btts": btts, "b_prob": b_prob,
+                "is_divergent": is_divergent, "p_quantum": p_quantum
             })
 
-    if not results:
-        print("ℹ️ Fine analisi: nessun match ha superato i filtri.")
-        return
+    if not results: return
 
     f_12 = sorted([r for r in results if r['segno'] in ['1', '2']], key=lambda x: x['prob'], reverse=True)[:10]
     f_x = sorted([r for r in results if r['segno'] == 'X'], key=lambda x: x['prob'], reverse=True)[:4]
     final_list = f_12 + f_x
 
-    msg = "🚀 *137BET - POWER REPORT xG V10*\n"
-    msg += f"📊 Match Analizzabili: {nomi_ok} | Inviati: {len(final_list)}\n"
-    msg += f"🏟 _Logica: Rho Dinamico + Fattore Motivazione_\n"
+    msg = "🚀 *137BET - POWER REPORT V11*\n"
+    msg += f"🏟 _Logica: Dixon-Coles + Regressione Alpha (1/137)_\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for b in final_list:
+        div_label = "⚛️ *DIVERGENZA 137*" if b['is_divergent'] else ""
         msg += (f"📅 {format_date(b['date'])}\n"
-                f"🏟 {b['match']}\n"
+                f"🏟 {b['match']} {div_label}\n"
                 f"🎯 Fissa: *{b['segno']}* @{b['quota']} ({round(b['prob']*100)}%)\n"
                 f"🛡 Combo: *{b['combo']}* ({round(b['c_prob']*100)}%)\n"
                 f"💎 BTTS: *{b['btts']}* ({round(b['b_prob']*100)}%)\n"
                 f"────────────────\n")
     
     send_telegram_msg(msg)
-    print(f"✅ Analisi V10 completata. Inviati {len(final_list)} match.")
+    print(f"✅ Analisi V11 Quantistica completata.")
 
 if __name__ == "__main__":
     run_analysis()
