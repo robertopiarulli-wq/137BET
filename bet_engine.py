@@ -19,13 +19,12 @@ def send_telegram_msg(message):
 def format_date(iso_date):
     try:
         dt = datetime.fromisoformat(iso_date.replace('Z', '+00:00').replace(' ', 'T'))
-        return dt.strftime("%H:%M")
+        return dt.strftime("%d/%m %H:%M")
     except: return "N.D."
 
-# --- LOGICA QUANTISTICA V15 (DAILY STREAM) ---
+# --- LOGICA QUANTISTICA V15.1 (CORRETTA) ---
 
 def get_pauli_v15(team_h, team_a):
-    """V15: Ottimizzata per Big 5 + Serie Cadette"""
     alpha = 1 / 137.036
     sigma = alpha ** 2
     pauli_threshold = 137 * sigma   
@@ -41,15 +40,20 @@ def get_pauli_v15(team_h, team_a):
         e_level, advice, x_boost = "INDISTINGUIBILE (X PURA)", "RISONANZA: X ALTA", 1.75
     elif pauli_p > pauli_threshold:
         e_level = "ECCITATO (ESCLUSIONE)"
-        exclusion = "2" if impact_h > impact_a else "1"
-        advice, x_boost = f"ESCLUSO SEGNO {exclusion}", 0.65
+        # FIX POLARITÀ: Se la casa è più forte (impact_h > impact_a), escludiamo il segno 2
+        if impact_h > impact_a:
+            exclusion = "2"
+            advice = "ESCLUSO SEGNO 2"
+        else:
+            exclusion = "1"
+            advice = "ESCLUSO SEGNO 1"
+        x_boost = 0.65
     else:
-        e_level, advice = "FONDAMENTALE", "EQUILIBRIO STANDARD"
+        e_level, advice = "FONDAMENTALE", "EQUILIBRIO"
         
     return round(pauli_p, 6), e_level, advice, x_boost, exclusion
 
 def get_full_analysis_v15(team_h, team_a):
-    """Dixon-Coles V15 con Salto Quantistico Radicale"""
     avg = 1.25
     lam_h = team_h['avg_scored'] * (team_a['avg_conceded'] / 1.0) * 1.15 * avg
     lam_a = team_a['avg_scored'] * (team_h['avg_conceded'] / 1.0) * 0.90 * avg
@@ -60,7 +64,7 @@ def get_full_analysis_v15(team_h, team_a):
     for i in range(6):
         for j in range(6):
             p = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
-            # Salto Quantistico: Svuotamento quasi totale degli stati proibiti (3%)
+            # Salto Quantistico: Svuotamento stati proibiti (Vittoria di chi è escluso)
             if exclusion == "2" and j > i: p *= 0.03 
             if exclusion == "1" and i > j: p *= 0.03 
             if i == j: p *= x_boost
@@ -69,7 +73,7 @@ def get_full_analysis_v15(team_h, team_a):
     probs /= probs.sum()
     return np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1))
 
-# --- ENGINE DI ANALISI V15 ---
+# --- ENGINE DI ANALISI V15.1 ---
 
 def run_analysis():
     matches = supabase.table("matches").select("*").execute().data
@@ -78,9 +82,9 @@ def run_analysis():
     team_names_list = list(stats_map.keys())
 
     now = datetime.now(timezone.utc)
-    # Target: Solo i match di domani (Daily Stream)
-    start_target = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0)
-    end_target = start_target + timedelta(hours=23, minutes=59)
+    # FINESTRA 48 ORE: Per evitare buchi di fuso orario
+    start_target = now - timedelta(hours=6)
+    end_target = now + timedelta(hours=42)
     
     results = []
 
@@ -90,14 +94,18 @@ def run_analysis():
         try: match_time = datetime.fromisoformat(m_date_str)
         except: continue
         
-        # Filtro Daily V15
         if not (start_target <= match_time <= end_target): continue
 
-        h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=70)
-        a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=70)
+        # MATCHING MORBIDO (60) per includere più squadre delle serie B
+        h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=60)
+        a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=60)
 
         if h_res and a_res:
             t_h, t_a = stats_map[h_res[0]], stats_map[a_res[0]]
+            
+            # Salto squadre con dati incompleti
+            if t_h['avg_scored'] == 0 or t_a['avg_scored'] == 0: continue
+
             p1, px, p2 = get_full_analysis_v15(t_h, t_a)
             pauli_p, level, advice, _, _ = get_pauli_v15(t_h, t_a)
             
@@ -106,10 +114,9 @@ def run_analysis():
             
             results.append({
                 "match": f"{m['home_team_name']} vs {m['away_team_name']}",
-                "time": match_time.strftime("%H:%M"),
+                "time": format_date(m['match_date']),
                 "segno": best_s, 
                 "prob": prob_final,
-                "quota": m.get(f'odds_{best_s.lower()}', 1.0),
                 "pauli_p": pauli_p, 
                 "advice": advice,
                 "level": level
@@ -117,11 +124,11 @@ def run_analysis():
 
     if not results: return
 
-    # Ordinamento Totale per Probabilità (Nessun limite di 14)
+    # Ordinamento Integrale per Probabilità
     final_list = sorted(results, key=lambda x: x['prob'], reverse=True)
     
-    msg = f"📅 *STREAM QUANTISTICO: {start_target.strftime('%d/%m')}*\n"
-    msg += "⚛️ _V15 GOLD: Big 5 + Serie Cadette_\n"
+    msg = "🚀 *137BET V15.1 - QUANTUM STREAM*\n"
+    msg += "⚛️ _Fix Polarità + Matching 48h_\n"
     msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for b in final_list:
