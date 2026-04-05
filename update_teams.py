@@ -8,7 +8,7 @@ FD_KEY = os.environ.get("FOOTBALL_DATA_API_KEY")
 supabase = create_client(SB_URL, SB_KEY)
 
 def update_all_teams():
-    leagues = ['SA', 'PL', 'PD', 'BL1', 'FL1']
+    leagues = ['SA', 'PL', 'PD', 'BL1', 'FL1', 'ELC', 'SEC', 'SB', 'GL', 'FL2']
     print("🔄 Inizio aggiornamento forma squadre...")
     
     for league in leagues:
