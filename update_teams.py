@@ -22,6 +22,16 @@ def update_all_teams():
             
             for entry in standings:
                 team_name = entry['team']['shortName']
+                played = entry.get('playedGames', 1)
+                
+                # EVITIAMO IL 1.2 FISSO: Calcoliamo le medie reali
+                # Se non hanno ancora giocato, usiamo 1.0 come base neutra
+                if played > 0:
+                    avg_s = round(entry['goalsFor'] / played, 2)
+                    avg_c = round(entry['goalsAgainst'] / played, 2)
+                else:
+                    avg_s, avg_c = 1.0, 1.0
+
                 raw_form = entry.get('form', 'DDDDD')
                 clean_form = raw_form.replace(',', '')[-5:] if raw_form else 'DDDDD'
                 
@@ -29,12 +39,12 @@ def update_all_teams():
                 supabase.table("teams").upsert({
                     "team_name": team_name,
                     "recent_form": clean_form,
-                    "avg_scored": 1.2, # Valore di default per le nuove squadre
-                    "avg_conceded": 1.2,
+                    "avg_scored": avg_s,     # <--- ORA È IL DATO REALE
+                    "avg_conceded": avg_c,   # <--- ORA È IL DATO REALE
                     "last_updated": "now()"
                 }, on_conflict="team_name").execute()
                 
-            print(f"✅ {league} sincronizzata.")
+            print(f"✅ {league} sincronizzata con medie reali.")
         except Exception as e:
             print(f"❌ Errore su {league}: {e}")
 
