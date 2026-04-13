@@ -128,3 +128,17 @@ def update_all_teams():
                     "avg_conceded": avg_c,
                     "clean_sheets": int(st['cs']),
                     "goals_scored_away": float(avg_away_scored),
+                    "p3": float(p3),
+                    "g3_f": float(g3_f),
+                    "g3_s": float(g3_s),
+                    "s3": float(s3),
+                    "last_updated": "now()"
+                }, on_conflict="team_name").execute()
+                
+            print(f"✅ {league} sincronizzata con metriche Parisi.")
+
+        except Exception as e:
+            print(f"❌ Errore su {league}: {e}")
+
+if __name__ == "__main__":
+    update_all_teams()
