@@ -22,7 +22,7 @@ def format_date(iso_date):
         return dt.strftime("%d/%m %H:%M")
     except: return "N.D."
 
-# --- LOGICHE DI PESO V17 ---
+# --- LOGICHE DI PESO V17.1 ---
 
 def get_momentum_weight(form_string):
     if not form_string: return 1.0
@@ -34,12 +34,43 @@ def get_defensive_factor(cs_count):
     bonus = (cs_count - 3) * 0.02
     return round(1 - max(-0.15, min(0.15, bonus)), 3)
 
+# --- NUOVO MOTORE PAULI-PARISI (PP) ---
+
+def get_pp_analysis(t_h, t_a):
+    """
+    Calcola il differenziale Parisi basato su Intensità (I) e Rugosità (Sigma)
+    Considerando Punti, Gol Fatti e Gol Subiti pesati (Casa 0.8 / Trasferta 0.5)
+    """
+    def calculate_intensity(stats, is_home):
+        # DeltaH (Punti ultime 3), Lambda_f (Gol fatti), Lambda_s (Gol subiti), Sigma (Rugosità)
+        # Nota: Questi dati devono essere estratti dal DB (colonne p3, g3_f, g3_s, s3)
+        p3 = stats.get('p3', 4.5) # Default media se manca dato
+        g3_f = stats.get('g3_f', 1.5)
+        g3_s = stats.get('g3_s', 1.5)
+        sigma = stats.get('s3', 1.0) # 0=Stabile, 1=Misto, 1.5=Instabile
+        
+        w_def = 0.8 if is_home else 0.5
+        
+        # Formula Parisi: I = (Punti + (GolF * 0.5) - (GolS * W_def)) / (1 + Sigma)
+        intensity = (p3 + (g3_f * 0.5) - (g3_s * w_def)) / (1 + sigma)
+        return intensity
+
+    i_h = calculate_intensity(t_h, True)
+    i_a = calculate_intensity(t_a, False)
+    diff = round(i_h - i_a, 2)
+    
+    if diff >= 6.37:
+        return diff, "🎯 FISSA"
+    elif -6.37 < diff < 6.37:
+        return diff, "🔀 DOPPIA 1-2"
+    else: # diff <= -6.37
+        return diff, "🛡️ DOPPIA 1-X"
+
 # --- ENGINE DI ANALISI QUANTISTICA V17.1 (CON ESCLUSIONE) ---
 
 def get_pauli_analysis_v17(t_h, t_a):
     alpha = 1 / 137.036
     sigma = alpha ** 2
-    pauli_threshold = 137 * sigma # Soglia di eccitazione (~0.0073)
     
     m_h, m_a = get_momentum_weight(t_h['recent_form']), get_momentum_weight(t_a['recent_form'])
     
@@ -51,8 +82,7 @@ def get_pauli_analysis_v17(t_h, t_a):
     exclusion = None
     advice = "EQUILIBRIO"
     
-    # Logica di Esclusione Quantistica
-    if pauli_p > 0.18: # Match eccitato: escludiamo il segno più debole
+    if pauli_p > 0.18:
         advice = "ECCITATO (ESCLUSIONE)"
         exclusion = "2" if impact_h > impact_a else "1"
     elif pauli_p < 0.05:
@@ -73,9 +103,8 @@ def get_full_analysis_v17(t_h, t_a):
     for i in range(6):
         for j in range(6):
             p = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
-            # APPLICAZIONE FILTRO ESCLUSIONE
-            if exclusion == "2" and j > i: p *= 0.03 # Abbattimento segno 2
-            if exclusion == "1" and i > j: p *= 0.03 # Abbattimento segno 1
+            if exclusion == "2" and j > i: p *= 0.03
+            if exclusion == "1" and i > j: p *= 0.03
             probs[i,j] = p
             
     probs /= probs.sum()
@@ -117,20 +146,12 @@ def run_analysis():
 
             p1, px, p2, pauli_p, advice = get_full_analysis_v17(t_h, t_a)
             
+            # Calcolo PP (Parisi)
+            pp_diff, pp_sentenza = get_pp_analysis(t_h, t_a)
+            
             outcomes = [('1', p1), ('X', px), ('2', p2)]
             best_s, prob_final = max(outcomes, key=lambda x: x[1])
-            
             stars = min(5, max(1, int(prob_final * 10) - 2)) 
-            
-            try:
-                supabase.table("predictions_history").insert({
-                    "match_name": f"{m['home_team_name']} vs {m['away_team_name']}",
-                    "match_date": m['match_date'],
-                    "predicted_sign": best_s,
-                    "probability": round(float(prob_final), 4),
-                    "pauli_p": float(pauli_p)
-                }).execute()
-            except: pass
             
             results.append({
                 "match": f"{m['home_team_name']} vs {m['away_team_name']}",
@@ -139,6 +160,8 @@ def run_analysis():
                 "prob": prob_final,
                 "pauli_p": pauli_p,
                 "advice": advice,
+                "pp_diff": pp_diff,
+                "pp_sentenza": pp_sentenza,
                 "stars": "⭐" * stars,
                 "m_h": get_momentum_weight(t_h['recent_form']),
                 "m_a": get_momentum_weight(t_a['recent_form'])
@@ -148,8 +171,8 @@ def run_analysis():
 
     final_list = sorted(results, key=lambda x: x['prob'], reverse=True)
     
-    msg = "🏆 *137BET V17.1 - QUANTUM GRAVITY*\n"
-    msg += "📡 _Filtro Pauli + Momentum + CS + Away_\n"
+    msg = "🏆 *137BET V17.2 - QUANTUM PARISI*\n"
+    msg += "📡 _Filtro Pauli + Indice Parisi (PP)_\n"
     msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for b in final_list:
@@ -158,8 +181,11 @@ def run_analysis():
         
         msg += (f"🕒 {b['time']} - {b['match']}\n"
                 f"🔥 Fiducia: {b['stars']}\n"
-                f"🛡️ Filtro: *{b['advice']}*\n"
-                f"🎯 Segno: *{b['segno']}* ({round(b['prob']*100)}%)\n"
+                f"📊 Form: {h_boost} vs {a_boost}\n"
+                f"🛡️ Filtro Pauli: *{b['advice']}*\n"
+                f"🌀 PP Index: `{b['pp_diff']}`\n"
+                f"💡 **SENTENZA PP: {b['pp_sentenza']}**\n"
+                f"🎯 Segno STD: *{b['segno']}* ({round(b['prob']*100)}%)\n"
                 f"💠 Pauli P: `{b['pauli_p']}`\n"
                 f"────────────────\n")
     
