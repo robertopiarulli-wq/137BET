@@ -34,13 +34,13 @@ def get_defensive_factor(cs_count):
     bonus = (cs_count - 3) * 0.02
     return round(1 - max(-0.15, min(0.15, bonus)), 3)
 
-# --- MOTORE PAULI-PARISI (PP) V17.2 PLATINUM (G-STYLE) ---
+# --- MOTORE PAULI-PARISI (PP) V17.5 PLATINUM (G-STYLE DEFINITIVO) ---
 
 def get_pp_analysis(t_h, t_a):
     """
-    LOGICA PARISI V17.2 - REVISIONE FINALE G
-    Gestione del segno meno per sprofondamento (-3 e -5 = -8 -> 1X)
-    Gestione del salto quantico per dominio (-9 e +4 = +13 -> FISSA 2)
+    LOGICA PARISI V17.5 - REVISIONE ASIMMETRICA
+    - Gestione Baratro: Se entrambi negativi, soglia 4.0 (1/7 scala) decide tra 1X e X2.
+    - Salto Quantico: Se Delta > 6.37 con segni opposti, la Fissa è confermata.
     """
     def calculate_intensity(stats, is_home):
         p3 = stats.get('p3', 0)
@@ -55,31 +55,30 @@ def get_pp_analysis(t_h, t_a):
 
     # 1. CALCOLO DELTA LOGICA G (DISTANZA E SEGNI)
     if i_h < 0 and i_a < 0:
-        # Entrambi negativi: somma dei debiti (Mantiene il segno meno)
-        delta = i_h + i_a
-    elif i_h < 0 and i_a >= 0:
-        # Salto quantico: Casa nel baratro, Ospite positivo (Distanza Positiva)
-        delta = abs(i_h) + abs(i_a)
-    elif i_h >= 0 and i_a < 0:
-        # Salto quantico: Casa positiva, Ospite nel baratro (Distanza Positiva)
-        delta = abs(i_h) + abs(i_a)
+        delta = i_h + i_a  # SPROFONDAMENTO
+    elif (i_h < 0 and i_a >= 0) or (i_h >= 0 and i_a < 0):
+        delta = abs(i_h) + abs(i_a) # SALTO QUANTICO
     else:
-        # Entrambi positivi: Differenza classica
-        delta = i_h - i_a
+        delta = i_h - i_a # STANDARD POSITIVO
 
     # 2. SENTENZE DEFINITIVE
-    # SE SPROFONDA (Meno e sotto soglia)
-    if delta < -6.37:
-        return round(delta, 2), "🛡️ DOPPIA 1-X"
     
-    # SE DOMINA (Più e sopra soglia)
+    # CASO BARATRO (Entrambi negativi)
+    if delta < -6.37:
+        # Filtro Asimmetrico: l'Ospite deve essere "meno scarso" di almeno 4.0
+        if (i_a - i_h) > 4.0:
+            return round(delta, 2), "🛡️ DOPPIA X-2"
+        else:
+            return round(delta, 2), "🛡️ DOPPIA 1-X"
+    
+    # CASO DOMINIO / SALTO QUANTICO (Positivo sopra soglia)
     elif delta > 6.37:
         if i_a > i_h:
             return round(delta, 2), "🎯 FISSA 2"
         else:
             return round(delta, 2), "🎯 FISSA 1"
             
-    # TURBOLENZA (Nel mezzo)
+    # TURBOLENZA (Equilibrio instabile)
     else:
         return round(delta, 2), "🔀 DOPPIA 1-2"
 
@@ -167,7 +166,7 @@ def run_analysis():
     if not results: return
     final_list = sorted(results, key=lambda x: x['prob'], reverse=True)
     
-    msg = "🏆 *137BET V17.2 - QUANTUM PARISI*\n📡 _Filtro Pauli + Indice Parisi (PP)_\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg = "🏆 *137BET V17.5 - QUANTUM PARISI MASTER*\n📡 _Fisica del Campo + Asimmetria Baratro_\n━━━━━━━━━━━━━━━━━━━━\n\n"
     for b in final_list:
         h_boost = "📈" if b['m_h'] > 1.05 else "📉" if b['m_h'] < 0.95 else "➖"
         a_boost = "📈" if b['m_a'] > 1.05 else "📉" if b['m_a'] < 0.95 else "➖"
