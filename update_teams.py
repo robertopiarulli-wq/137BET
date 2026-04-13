@@ -12,6 +12,7 @@ supabase = create_client(SB_URL, SB_KEY)
 def clean_team_name(name):
     """Normalizza i nomi delle squadre per evitare duplicati sporchi"""
     if not name: return ""
+    # Rimuove suffissi comuni che generano doppioni
     to_remove = [" FC", " 1909", " AFC", " AS", " AC", "BSC ", " CF"]
     cleaned = name
     for word in to_remove:
@@ -103,6 +104,13 @@ def update_all_teams():
                 avg_s = round(float(entry['goalsFor'] / played), 2) if played > 0 else 1.0
                 avg_c = round(float(entry['goalsAgainst'] / played), 2) if played > 0 else 1.0
                 
+                # --- FIX FORMA (GESTIONE NONE) ---
+                raw_form = entry.get('form')
+                if raw_form is None:
+                    clean_form = 'DDDDD'
+                else:
+                    clean_form = str(raw_form).replace(',', '')[-5:]
+                
                 # Recupero dati Parisi Index
                 history = team_matches_history.get(team_name, [])
                 p3 = sum({'W': 3, 'D': 1, 'L': 0}[m['res']] for m in history)
@@ -115,22 +123,8 @@ def update_all_teams():
 
                 supabase.table("teams").upsert({
                     "team_name": team_name,
-                    "recent_form": entry.get('form', 'DDDDD').replace(',', '')[-5:],
+                    "recent_form": clean_form,
                     "avg_scored": avg_s,
                     "avg_conceded": avg_c,
                     "clean_sheets": int(st['cs']),
                     "goals_scored_away": float(avg_away_scored),
-                    "p3": float(p3),
-                    "g3_f": float(g3_f),
-                    "g3_s": float(g3_s),
-                    "s3": float(s3),
-                    "last_updated": "now()"
-                }, on_conflict="team_name").execute()
-                
-            print(f"✅ {league} sincronizzata con metriche Parisi.")
-
-        except Exception as e:
-            print(f"❌ Errore su {league}: {e}")
-
-if __name__ == "__main__":
-    update_all_teams()
