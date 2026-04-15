@@ -15,8 +15,17 @@ COMPETITIONS = [2021, 2019, 2014, 2002, 2015]
 def fetch_and_sync_matches():
     headers = {'X-Auth-Token': FD_KEY}
     
-    # Pulizia match vecchi (opzionale, o puoi fare update)
-    # supabase.table("matches").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+    # --- LOGICA DI AUTO-PULIZIA ---
+    # Calcoliamo la data di ieri in formato ISO
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    
+    try:
+        # Cancella dal DB i match più vecchi di ieri
+        supabase.table("matches").delete().lt("match_date", yesterday).execute()
+        print("🧹 Pulizia database: match vecchi rimossi con successo.")
+    except Exception as e:
+        print(f"⚠️ Nota sulla pulizia: {e}")
+    # ------------------------------
 
     for comp in COMPETITIONS:
         url = f"https://api.football-data.org/v4/competitions/{comp}/matches?status=SCHEDULED"
