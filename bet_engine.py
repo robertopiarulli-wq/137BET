@@ -82,7 +82,7 @@ def get_pp_analysis(t_h, t_a):
     else:
         return round(delta, 2), "🔀 DOPPIA 1-2"
 
-# --- ENGINE QUANTISTICO (POISSON + PAULI) ---
+# --- ENGINE QUANTISTICO ---
 
 def get_full_analysis_v17(t_h, t_a):
     m_h, m_a = get_momentum_weight(t_h['recent_form']), get_momentum_weight(t_a['recent_form'])
@@ -94,16 +94,9 @@ def get_full_analysis_v17(t_h, t_a):
     impact_a = (t_a['goals_scored_away'] * t_h['avg_conceded']) * m_a
     pauli_p = (impact_h * impact_a) * sigma_q * 1000
     
-    # Filtro Esclusione Pauli
-    exclusion = None
-    advice = "EQUILIBRIO"
-    if pauli_p > 0.18:
-        advice = "ECCITATO (ESCLUSIONE)"
-        exclusion = "2" if impact_h > impact_a else "1"
-    elif pauli_p < 0.05:
-        advice = "RISONANZA (X ALTA)"
+    exclusion = "2" if pauli_p > 0.18 and impact_h > impact_a else "1" if pauli_p > 0.18 else None
+    advice = "ECCITATO (ESCLUSIONE)" if pauli_p > 0.18 else "RISONANZA (X ALTA)" if pauli_p < 0.05 else "EQUILIBRIO"
     
-    # Calcolo Poissoniano con correzione 137
     lam_h = (t_h['avg_scored'] * (t_a['avg_conceded'] * def_a)) * m_h * 1.15
     lam_a = (t_a['goals_scored_away'] * (t_h['avg_conceded'] * def_h)) * m_a * 0.90
     
@@ -111,16 +104,11 @@ def get_full_analysis_v17(t_h, t_a):
     for i in range(6):
         for j in range(6):
             p = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
-            # Applicazione Esclusione Quantistica
             if exclusion == "2" and j > i: p *= 0.03
             if exclusion == "1" and i > j: p *= 0.03
             probs[i,j] = p
-            
     probs /= probs.sum()
-    p1 = np.sum(np.tril(probs, -1))
-    px = np.sum(np.diag(probs))
-    p2 = np.sum(np.triu(probs, 1))
-    
+    p1, px, p2 = np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1))
     return p1, px, p2, pauli_p, advice
 
 # --- CORE ENGINE ---
@@ -147,8 +135,6 @@ def run_analysis():
 
             if h_res and a_res:
                 t_h, t_a = stats_map[h_res[0]], stats_map[a_res[0]]
-                if t_h['avg_scored'] == 0 or t_a['avg_scored'] == 0: continue
-
                 p1, px, p2, pauli_p, advice = get_full_analysis_v17(t_h, t_a)
                 pp_diff, pp_sentenza = get_pp_analysis(t_h, t_a)
                 
@@ -169,20 +155,15 @@ def run_analysis():
 
                 save_prediction_137bet(analysis_packet)
                 results.append(analysis_packet)
-        except Exception as e:
-            print(f"Errore match {m.get('home_team_name')}: {e}")
-            continue
+        except: continue
 
     if not results: return
-    
-    # Ordinamento per probabilità del segno scelto
     final_list = sorted(results, key=lambda x: max(x['p1'], x['px'], x['p2']), reverse=True)
     
-    msg = "🏆 *137BET V17.6 - QUANTUM LOGGING*\n📡 _Fisica del Campo + Asimmetria Baratro_\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg = "🏆 *137BET V17.6 - QUANTUM PARISI MASTER*\n📡 _Fisica del Campo + Asimmetria Baratro_\n━━━━━━━━━━━━━━━━━━━━\n\n"
     for b in final_list:
         h_boost = "📈" if b['m_h'] > 1.05 else "📉" if b['m_h'] < 0.95 else "➖"
         a_boost = "📈" if b['m_a'] > 1.05 else "📉" if b['m_a'] < 0.95 else "➖"
-        prob_val = round(max(b['p1'], b['px'], b['p2']) * 100)
         
         msg += (f"🕒 {b['time']} - {b['match']}\n"
                 f"🔥 Fiducia: {b['stars']}\n"
@@ -190,7 +171,7 @@ def run_analysis():
                 f"🛡️ Filtro Pauli: *{b['advice']}*\n"
                 f"🌀 PP Index: `{b['pp_diff']}`\n"
                 f"💡 **SENTENZA PP: {b['pp_sentenza']}**\n"
-                f"🎯 Segno STD: *{b['segno']}* ({prob_val}%)\n"
+                f"🎯 Segno STD: *{b['segno']}* ({round(max(b['p1'],b['px'],b['p2'])*100)}%)\n"
                 f"────────────────\n")
     
     send_telegram_msg(msg)
