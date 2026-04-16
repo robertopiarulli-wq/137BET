@@ -1,7 +1,7 @@
 import os
 import requests
 from supabase import create_client
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Configurazione
 FD_KEY = os.environ.get("FOOTBALL_DATA_API_KEY")
