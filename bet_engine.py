@@ -120,7 +120,7 @@ def run_analysis():
     team_names_list = list(stats_map.keys())
 
     now = datetime.now(timezone.utc)
-    start_target, end_target = now - timedelta(hours=12), now + timedelta(hours=96)
+    start_target, end_target = now - timedelta(hours=12), now + timedelta(hours=120)
     results = []
 
     for m in matches:
