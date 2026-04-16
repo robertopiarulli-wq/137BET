@@ -130,8 +130,8 @@ def run_analysis():
             match_time = datetime.fromisoformat(m_date_str)
             if not (start_target <= match_time <= end_target): continue
 
-            h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=60)
-            a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=60)
+            h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=45)
+            a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=45)
 
             if h_res and a_res:
                 t_h, t_a = stats_map[h_res[0]], stats_map[a_res[0]]
