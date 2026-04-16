@@ -97,11 +97,10 @@ def get_full_analysis_v17(t_h, t_a):
     return np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1)), pauli_p, advice
 
 def run_analysis():
-    print("🚀 Avvio 137BET V17.8 Weekend-Unlocker...")
-    matches = supabase.table("matches").select("*").execute().data
-    teams_data = supabase.table("teams").select("*").execute().data
-    stats_map = {t['team_name']: t for t in teams_data}
-    team_names_list = list(stats_map.keys())
+    print("🚀 TEST DI CONNESSIONE DIRETTA...")
+    # Questo invia un messaggio singolo e cortissimo per vedere se il tunnel è aperto
+    send_telegram_msg("🛰️ TEST V17.9: Se leggi questo, il Token e la Chat ID sono corretti!")
+    print("✅ Messaggio di test inviato. Controlla Telegram!")
 
     print(f"📊 Caricati {len(matches)} match dal database.")
     
