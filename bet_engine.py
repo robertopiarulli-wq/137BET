@@ -48,16 +48,39 @@ def get_defensive_factor(cs_count):
     return round(1 - max(-0.15, min(0.15, bonus)), 3)
 
 def get_pp_analysis(t_h, t_a):
+    """
+    LOGICA DISTANZA LINEARE PURA (TABELLA G + INTUIZIONE G)
+    Range basati sulla differenza netta i_h - i_a
+    """
     def calculate_intensity(stats, is_home):
         p3, g3_f, g3_s = stats.get('p3', 0), stats.get('g3_f', 0), stats.get('g3_s', 0)
         sigma = stats.get('s3', 1.0)
         return (p3 + (g3_f * 0.5) - (g3_s * (0.8 if is_home else 0.5))) / (1 + sigma)
-    i_h, i_a = calculate_intensity(t_h, True), calculate_intensity(t_a, False)
-    delta = (i_h + i_a) if (i_h < 0 and i_a < 0) else (abs(i_h) + abs(i_a)) if (i_h < 0 or i_a < 0) else (i_h - i_a)
-    if delta < -6.37: sentenza = "🛡️ DOPPIA X-2" if (i_a - i_h) > 4.0 else "🛡️ DOPPIA 1-X"
-    elif delta > 6.37: sentenza = "🎯 FISSA 2" if i_a > i_h else "🎯 FISSA 1"
-    else: sentenza = "🔀 DOPPIA 1-2"
-    return round(delta, 2), sentenza
+    
+    i_h = calculate_intensity(t_h, True)
+    i_a = calculate_intensity(t_a, False)
+    
+    # --- DISTANZA LINEARE PURA ---
+    # Calcolo dello scarto reale sulla linea dei numeri
+    delta = round(i_h - i_a, 2)
+
+    # Applicazione Range basati sulla Tabella G
+    if delta > 8:
+        sentenza = "🎯 FISSA 1"
+    elif delta < -8:
+        sentenza = "🎯 FISSA 2"
+    elif 4 < delta <= 8 or -8 <= delta < -4:
+        sentenza = "🔀 DOPPIA 12"
+    elif 2 < delta <= 4:
+        sentenza = "🛡️ DOPPIA 1X"
+    elif -4 <= delta < -2:
+        sentenza = "🛡️ DOPPIA X2"
+    elif -2 <= delta <= 2:
+        sentenza = "🔒 FISSA X"
+    else:
+        sentenza = "🔀 DOPPIA 12"
+
+    return delta, sentenza
 
 def get_full_analysis_v17(t_h, t_a):
     m_h, m_a = get_momentum_weight(t_h['recent_form']), get_momentum_weight(t_a['recent_form'])
@@ -83,13 +106,10 @@ def get_full_analysis_v17(t_h, t_a):
     return np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1)), pauli_p, advice
 
 def run_analysis():
-    print("🚀 Avvio 137BET V17.9 Gold - Quantum Splitter...")
+    print("🚀 Avvio 137BET V18.1 - Pure Linear Distance Edition...")
     
-    # Scarico dati
     matches = supabase.table("matches").select("*").execute().data
     teams_data = supabase.table("teams").select("*").execute().data
-    
-    print(f"📊 Caricati {len(matches)} match dal database.")
     
     stats_map = {t['team_name']: t for t in teams_data}
     team_names_list = list(stats_map.keys())
@@ -133,28 +153,25 @@ def run_analysis():
             print(f"⚠️ Errore nel match {m.get('home_team_name')}: {e}")
 
     if results:
-        # Ordiniamo per fiducia
         final_list = sorted(results, key=lambda x: len(x['stars']), reverse=True)
-        header = "🏆 *137BET V17.9 - QUANTUM SENTENZE*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        header = "🏆 *137BET V18.1 - DISTANZA LINEARE*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         
-        # Invio a blocchi di 5 per non intasare Telegram
         for i in range(0, len(final_list), 5):
             chunk = final_list[i:i + 5]
-            msg = header + f"📦 *BLOCCO { (i//5) + 1}*\n\n"
+            msg = header + f"📦 *SENTENZE DEL WEEKEND ({(i//5) + 1})*\n\n"
             for b in chunk:
                 h_b = "📈" if b['m_h'] > 1.05 else "📉" if b['m_h'] < 0.95 else "➖"
                 a_b = "📈" if b['m_a'] > 1.05 else "📉" if b['m_a'] < 0.95 else "➖"
                 msg += (f"🕒 {b['time']} - {b['match']}\n"
                         f"🔥 Fiducia: {b['stars']} | Form: {h_b} vs {a_b}\n"
-                        f"🛡️ Pauli: *{b['advice']}* | PP: `{b['pp_diff']}`\n"
+                        f"📏 Delta Lineare: `{b['pp_diff']}`\n"
                         f"💡 **SENTENZA: {b['pp_sentenza']}**\n"
                         f"🎯 Segno: *{b['segno']}* ({round(max(b['p1'],b['px'],b['p2'])*100)}%)\n"
                         f"────────────────\n")
             
             send_telegram_msg(msg)
-            print(f"✅ Blocco { (i//5) + 1} inviato.")
     else:
-        print("❌ Nessun match trovato nei criteri temporali.")
+        print("❌ Nessun match trovato.")
 
 if __name__ == "__main__":
     run_analysis()
