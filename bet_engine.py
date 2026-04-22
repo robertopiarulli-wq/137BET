@@ -20,16 +20,70 @@ def send_telegram_msg(message):
         except Exception as e:
             print(f"⚠️ Errore invio Telegram: {e}")
 
+def calculate_ranking_logic(p1, px, p2, sentenza):
+    """
+    LOGICA RANKING DASHBOARD (V18.2)
+    - Se Poisson >= 60% -> FISSA
+    - Altrimenti -> DOPPIA (PP + Miglior segno restante)
+    """
+    probs = {"1": p1, "X": px, "2": p2}
+    best_s = max(probs, key=probs.get)
+    max_p = probs[best_s]
+
+    # REGOLA 1: FISSA STATISTICA (>= 60%)
+    if max_p >= 0.60:
+        return round(max_p * 100, 2), best_s
+
+    # REGOLA 2: DOPPIA DINAMICA (Basata su Sentenza PP)
+    if "12" in sentenza:
+        return round((p1 + p2) * 100, 2), "12"
+    
+    if "X" in sentenza:
+        # Se PP dice X, sommiamo il segno rimanente più alto (1 o 2)
+        if p1 > p2:
+            return round((px + p1) * 100, 2), "1X"
+        else:
+            return round((px + p2) * 100, 2), "X2"
+            
+    if "1" in sentenza:
+        # Se PP dice 1 ma Poisson è < 60%, cerchiamo la miglior copertura
+        if px > p2:
+            return round((p1 + px) * 100, 2), "1X"
+        else:
+            return round((p1 + p2) * 100, 2), "12"
+
+    if "2" in sentenza:
+        # Se PP dice 2 ma Poisson è < 60%, cerchiamo la miglior copertura
+        if px > p1:
+            return round((p2 + px) * 100, 2), "X2"
+        else:
+            return round((p2 + p1) * 100, 2), "12"
+
+    return round(max_p * 100, 2), best_s
+
 def save_prediction_137bet(data):
     try:
+        # Calcoliamo i valori per il Ranking prima del salvataggio
+        rank_p, rank_s = calculate_ranking_logic(data['p1'], data['px'], data['p2'], data['pp_sentenza'])
+        
         supabase.table("prediction_history_137bet").insert({
-            "match_name": data['match'], "match_date": data['time'],
-            "pp_diff": data['pp_diff'], "pp_sentenza": data['pp_sentenza'],
-            "prob_1": round(data['p1'], 4), "prob_x": round(data['px'], 4), "prob_2": round(data['p2'], 4),
-            "pauli_advice": data['advice'], "final_sign_std": data['segno'],
-            "stars": data['stars'], "home_momentum": data['m_h'], "away_momentum": data['m_a']
+            "match_name": data['match'], 
+            "match_date": data['time'],
+            "pp_diff": data['pp_diff'], 
+            "pp_sentenza": data['pp_sentenza'],
+            "prob_1": round(data['p1'], 4), 
+            "prob_x": round(data['px'], 4), 
+            "prob_2": round(data['p2'], 4),
+            "pauli_advice": data['advice'], 
+            "final_sign_std": data['segno'],
+            "stars": data['stars'], 
+            "home_momentum": data['m_h'], 
+            "away_momentum": data['m_a'],
+            "ranking_power": rank_p,  # Nuova Colonna Ranking
+            "ranking_sign": rank_s    # Nuova Colonna Segno Ranking
         }).execute()
-    except Exception as e: print(f"⚠️ Errore DB: {e}")
+    except Exception as e: 
+        print(f"⚠️ Errore DB: {e}")
 
 def format_date(iso_date):
     try:
@@ -48,10 +102,6 @@ def get_defensive_factor(cs_count):
     return round(1 - max(-0.15, min(0.15, bonus)), 3)
 
 def get_pp_analysis(t_h, t_a):
-    """
-    LOGICA DISTANZA LINEARE PURA (TABELLA G + INTUIZIONE G)
-    Range basati sulla differenza netta i_h - i_a
-    """
     def calculate_intensity(stats, is_home):
         p3, g3_f, g3_s = stats.get('p3', 0), stats.get('g3_f', 0), stats.get('g3_s', 0)
         sigma = stats.get('s3', 1.0)
@@ -59,26 +109,15 @@ def get_pp_analysis(t_h, t_a):
     
     i_h = calculate_intensity(t_h, True)
     i_a = calculate_intensity(t_a, False)
-    
-    # --- DISTANZA LINEARE PURA ---
-    # Calcolo dello scarto reale sulla linea dei numeri
     delta = round(i_h - i_a, 2)
 
-    # Applicazione Range basati sulla Tabella G
-    if delta > 8:
-        sentenza = "🎯 FISSA 1"
-    elif delta < -8:
-        sentenza = "🎯 FISSA 2"
-    elif 4 < delta <= 8 or -8 <= delta < -4:
-        sentenza = "🔀 DOPPIA 12"
-    elif 2 < delta <= 4:
-        sentenza = "🛡️ DOPPIA 1X"
-    elif -4 <= delta < -2:
-        sentenza = "🛡️ DOPPIA X2"
-    elif -2 <= delta <= 2:
-        sentenza = "🔒 FISSA X"
-    else:
-        sentenza = "🔀 DOPPIA 12"
+    if delta > 8: sentenza = "🎯 FISSA 1"
+    elif delta < -8: sentenza = "🎯 FISSA 2"
+    elif 4 < delta <= 8 or -8 <= delta < -4: sentenza = "🔀 DOPPIA 12"
+    elif 2 < delta <= 4: sentenza = "🛡️ DOPPIA 1X"
+    elif -4 <= delta < -2: sentenza = "🛡️ DOPPIA X2"
+    elif -2 <= delta <= 2: sentenza = "🔒 FISSA X"
+    else: sentenza = "🔀 DOPPIA 12"
 
     return delta, sentenza
 
@@ -106,7 +145,7 @@ def get_full_analysis_v17(t_h, t_a):
     return np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1)), pauli_p, advice
 
 def run_analysis():
-    print("🚀 Avvio 137BET V18.1 - Pure Linear Distance Edition...")
+    print("🚀 Avvio 137BET V18.2 - Ranking & Linear Distance Edition...")
     
     matches = supabase.table("matches").select("*").execute().data
     teams_data = supabase.table("teams").select("*").execute().data
@@ -154,19 +193,22 @@ def run_analysis():
 
     if results:
         final_list = sorted(results, key=lambda x: len(x['stars']), reverse=True)
-        header = "🏆 *137BET V18.1 - DISTANZA LINEARE*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        header = "🏆 *137BET V18.2 - RANKING SYSTEM*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         
         for i in range(0, len(final_list), 5):
             chunk = final_list[i:i + 5]
             msg = header + f"📦 *SENTENZE DEL WEEKEND ({(i//5) + 1})*\n\n"
             for b in chunk:
+                # Recuperiamo al volo il segno ranking per il messaggio Telegram
+                _, r_sign = calculate_ranking_logic(b['p1'], b['px'], b['p2'], b['pp_sentenza'])
+                
                 h_b = "📈" if b['m_h'] > 1.05 else "📉" if b['m_h'] < 0.95 else "➖"
                 a_b = "📈" if b['m_a'] > 1.05 else "📉" if b['m_a'] < 0.95 else "➖"
                 msg += (f"🕒 {b['time']} - {b['match']}\n"
                         f"🔥 Fiducia: {b['stars']} | Form: {h_b} vs {a_b}\n"
-                        f"📏 Delta Lineare: `{b['pp_diff']}`\n"
+                        f"📏 Delta PP: `{b['pp_diff']}`\n"
                         f"💡 **SENTENZA: {b['pp_sentenza']}**\n"
-                        f"🎯 Segno: *{b['segno']}* ({round(max(b['p1'],b['px'],b['p2'])*100)}%)\n"
+                        f"📊 Ranking: *{r_sign}* | Segno: *{b['segno']}*\n"
                         f"────────────────\n")
             
             send_telegram_msg(msg)
