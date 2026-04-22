@@ -20,141 +20,158 @@ def send_telegram_msg(message):
         except Exception as e:
             print(f"⚠️ Errore invio Telegram: {e}")
 
-def calculate_ranking_logic(p1, px, p2, delta, sentenza):
-    """
-    V18.9 Platinum - THE REASONER
-    Logica di coordinamento senza pesi esterni.
-    """
-    probs = {"1": p1, "X": px, "2": p2}
-    max_poisson_sign = max(probs, key=probs.get)
-    max_poisson_val = probs[max_poisson_sign]
-    sent = sentenza.upper()
-
-    # --- 1. FILTRO DI COERENZA (Poisson Schiacciante) ---
-    if max_poisson_val >= 0.60:
-        if max_poisson_sign == "1":
-            r_sign, base_p = "1X", (p1 + px)
-        elif max_poisson_sign == "2":
-            r_sign, base_p = "X2", (px + p2)
-        else:
-            r_sign, base_p = "X", px
-            
-    # --- 2. LOGICA COORDINATA (Poisson < 60%) ---
-    elif "1X" in sent:
-        r_sign, base_p = "1X", (p1 + px)
-    elif "X2" in sent:
-        r_sign, base_p = "X2", (px + p2)
-    elif "12" in sent:
-        r_sign, base_p = "12", (p1 + p2)
-    elif "FISSA X" in sent:
-        # Regola G: Doppia abbinata alla percentuale maggiore Poisson
-        r_sign, base_p = ("X2", px + p2) if p2 > p1 else ("1X", px + p1)
-    elif "FISSA 1" in sent:
-        r_sign, base_p = "1", p1
-    elif "FISSA 2" in sent:
-        r_sign, base_p = "2", p2
-    else:
-        r_sign, base_p = max_poisson_sign, max_poisson_val
-
-    return round(base_p * 100, 2), r_sign
-
 def save_prediction_137bet(data):
-    """ Salvataggio con Timestamp per Backtest """
     try:
         supabase.table("prediction_history_137bet").insert({
-            "match_name": data['match'], 
-            "match_date": data['time'],
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "pp_diff": data['pp_diff'], 
-            "pp_sentenza": data['pp_sentenza'],
-            "prob_1": round(data['p1'], 4), 
-            "prob_x": round(data['px'], 4), 
-            "prob_2": round(data['p2'], 4),
-            "ranking_power": data['rank_p'],  
-            "ranking_sign": data['segno']    
+            "match_name": data['match'], "match_date": data['time'],
+            "pp_diff": data['pp_diff'], "pp_sentenza": data['pp_sentenza'],
+            "prob_1": round(data['p1'], 4), "prob_x": round(data['px'], 4), "prob_2": round(data['p2'], 4),
+            "pauli_advice": data['advice'], "final_sign_std": data['segno'],
+            "stars": data['stars'], "home_momentum": data['m_h'], "away_momentum": data['m_a']
         }).execute()
-    except Exception as e: 
-        print(f"⚠️ Errore DB: {e}")
+    except Exception as e: print(f"⚠️ Errore DB: {e}")
+
+def format_date(iso_date):
+    try:
+        dt = datetime.fromisoformat(iso_date.replace('Z', '+00:00').replace(' ', 'T'))
+        return dt.strftime("%d/%m %H:%M")
+    except: return "N.D."
 
 def get_momentum_weight(form_string):
     if not form_string: return 1.0
     clean_form = form_string.replace(',', '')[-5:]
     points = sum({'W': 3, 'D': 1, 'L': 0}.get(c, 0) for c in clean_form)
-    return round(1 + (points - 7.5) / 60, 3)
+    return round(1 + (points - 7.5) / 50, 3)
+
+def get_defensive_factor(cs_count):
+    bonus = (cs_count - 3) * 0.02
+    return round(1 - max(-0.15, min(0.15, bonus)), 3)
 
 def get_pp_analysis(t_h, t_a):
+    """
+    LOGICA DISTANZA LINEARE PURA (TABELLA G + INTUIZIONE G)
+    Range basati sulla differenza netta i_h - i_a
+    """
     def calculate_intensity(stats, is_home):
         p3, g3_f, g3_s = stats.get('p3', 0), stats.get('g3_f', 0), stats.get('g3_s', 0)
         sigma = stats.get('s3', 1.0)
         return (p3 + (g3_f * 0.5) - (g3_s * (0.8 if is_home else 0.5))) / (1 + sigma)
     
-    i_h, i_a = calculate_intensity(t_h, True), calculate_intensity(t_a, False)
+    i_h = calculate_intensity(t_h, True)
+    i_a = calculate_intensity(t_a, False)
+    
+    # --- DISTANZA LINEARE PURA ---
+    # Calcolo dello scarto reale sulla linea dei numeri
     delta = round(i_h - i_a, 2)
 
-    if delta > 8: sent = "🎯 FISSA 1"
-    elif delta < -8: sent = "🎯 FISSA 2"
-    elif 4 < delta <= 8 or -8 <= delta < -4: sent = "🔀 DOPPIA 12"
-    elif 2 < delta <= 4: sent = "🛡️ DOPPIA 1X"
-    elif -4 <= delta < -2: sent = "🛡️ DOPPIA X2"
-    else: sent = "🔒 FISSA X"
-    return delta, sent
+    # Applicazione Range basati sulla Tabella G
+    if delta > 8:
+        sentenza = "🎯 FISSA 1"
+    elif delta < -8:
+        sentenza = "🎯 FISSA 2"
+    elif 4 < delta <= 8 or -8 <= delta < -4:
+        sentenza = "🔀 DOPPIA 12"
+    elif 2 < delta <= 4:
+        sentenza = "🛡️ DOPPIA 1X"
+    elif -4 <= delta < -2:
+        sentenza = "🛡️ DOPPIA X2"
+    elif -2 <= delta <= 2:
+        sentenza = "🔒 FISSA X"
+    else:
+        sentenza = "🔀 DOPPIA 12"
+
+    return delta, sentenza
+
+def get_full_analysis_v17(t_h, t_a):
+    m_h, m_a = get_momentum_weight(t_h['recent_form']), get_momentum_weight(t_a['recent_form'])
+    def_h, def_a = get_defensive_factor(t_h['clean_sheets']), get_defensive_factor(t_a['clean_sheets'])
+    sigma_q = (1 / 137.036) ** 2
+    impact_h = (t_h['avg_scored'] * t_a['avg_conceded']) * m_h
+    impact_a = (t_a['goals_scored_away'] * t_h['avg_conceded']) * m_a
+    pauli_p = (impact_h * impact_a) * sigma_q * 1000
+    exclusion, advice = None, "EQUILIBRIO"
+    if pauli_p > 0.18:
+        advice, exclusion = "ECCITATO (ESCLUSIONE)", ("2" if impact_h > impact_a else "1")
+    elif pauli_p < 0.05: advice = "RISONANZA (X ALTA)"
+    lam_h = (t_h['avg_scored'] * (t_a['avg_conceded'] * def_a)) * m_h * 1.15
+    lam_a = (t_a['goals_scored_away'] * (t_h['avg_conceded'] * def_h)) * m_a * 0.90
+    probs = np.zeros((6, 6))
+    for i in range(6):
+        for j in range(6):
+            p = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
+            if exclusion == "2" and j > i: p *= 0.03
+            if exclusion == "1" and i > j: p *= 0.03
+            probs[i,j] = p
+    probs /= probs.sum()
+    return np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1)), pauli_p, advice
 
 def run_analysis():
-    print("🚀 Esecuzione 137BET V18.9 Platinum...")
+    print("🚀 Avvio 137BET V18.1 - Pure Linear Distance Edition...")
+    
     matches = supabase.table("matches").select("*").execute().data
-    teams = supabase.table("teams").select("*").execute().data
-    stats_map = {t['team_name']: t for t in teams}
+    teams_data = supabase.table("teams").select("*").execute().data
+    
+    stats_map = {t['team_name']: t for t in teams_data}
+    team_names_list = list(stats_map.keys())
+
+    now = datetime.now(timezone.utc)
+    start_target = now - timedelta(hours=24)
+    end_target = now + timedelta(hours=160)
     
     results = []
+
     for m in matches:
         try:
-            h_res = process.extractOne(m['home_team_name'], list(stats_map.keys()), score_cutoff=35)
-            a_res = process.extractOne(m['away_team_name'], list(stats_map.keys()), score_cutoff=35)
+            m_date_str = m['match_date'].replace('Z', '+00:00').replace(' ', 'T')
+            match_time = datetime.fromisoformat(m_date_str)
             
+            if not (start_target <= match_time <= end_target):
+                continue
+
+            h_res = process.extractOne(m['home_team_name'], team_names_list, score_cutoff=35)
+            a_res = process.extractOne(m['away_team_name'], team_names_list, score_cutoff=35)
+
             if h_res and a_res:
                 t_h, t_a = stats_map[h_res[0]], stats_map[a_res[0]]
-                m_h, m_a = get_momentum_weight(t_h['recent_form']), get_momentum_weight(t_a['recent_form'])
+                p1, px, p2, pauli_p, advice = get_full_analysis_v17(t_h, t_a)
+                pp_diff, pp_sentenza = get_pp_analysis(t_h, t_a)
                 
-                # Poisson Omogeneo
-                lam_h = (t_h['avg_scored'] * t_a['avg_conceded']) * m_h * 1.10
-                lam_a = (t_a['avg_scored'] * t_h['avg_conceded']) * m_a
-                if t_a['avg_conceded'] < 1.05: lam_a = max(lam_a, 1.15)
-
-                probs = np.zeros((6, 6))
-                for i in range(6):
-                    for j in range(6):
-                        probs[i,j] = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
-                probs /= probs.sum()
-                p1, px, p2 = np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1))
-
-                delta, sent = get_pp_analysis(t_h, t_a)
-                rank_val, rank_sign = calculate_ranking_logic(p1, px, p2, delta, sent)
-
+                best_s, prob_f = max([('1', p1), ('X', px), ('2', p2)], key=lambda x: x[1])
+                
                 res = {
                     "match": f"{m['home_team_name']} vs {m['away_team_name']}",
-                    "time": m['match_date'], "p1": p1, "px": px, "p2": p2,
-                    "pp_diff": delta, "pp_sentenza": sent, "rank_p": rank_val, "segno": rank_sign,
-                    "stars": "⭐" * min(5, max(1, int(max(p1, px, p2) * 10) - 2))
+                    "time": format_date(m['match_date']),
+                    "segno": best_s, "p1": p1, "px": px, "p2": p2,
+                    "advice": advice, "pp_diff": pp_diff, "pp_sentenza": pp_sentenza,
+                    "stars": "⭐" * min(5, max(1, int(prob_f * 10) - 2)),
+                    "m_h": get_momentum_weight(t_h['recent_form']),
+                    "m_a": get_momentum_weight(t_a['recent_form'])
                 }
                 save_prediction_137bet(res)
                 results.append(res)
-        except Exception as e: print(f"⚠️ Errore: {e}")
+        except Exception as e:
+            print(f"⚠️ Errore nel match {m.get('home_team_name')}: {e}")
 
     if results:
-        # ORDINAMENTO DECISIVO PER RANK POWER
-        final_list = sorted(results, key=lambda x: x['rank_p'], reverse=True)
-        header = "🏆 *137BET V18.9 - PLATINUM*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        final_list = sorted(results, key=lambda x: len(x['stars']), reverse=True)
+        header = "🏆 *137BET V18.1 - DISTANZA LINEARE*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         
         for i in range(0, len(final_list), 5):
             chunk = final_list[i:i + 5]
-            msg = header + f"📦 *TOP RANKING ({(i//5) + 1})*\n\n"
+            msg = header + f"📦 *SENTENZE DEL WEEKEND ({(i//5) + 1})*\n\n"
             for b in chunk:
-                msg += (f"🕒 {b['match']}\n"
-                        f"📏 **Rank: {b['rank_p']}%** | {b['stars']}\n"
-                        f"💡 PP: `{b['pp_sentenza']}`\n"
-                        f"📊 DASHBOARD: *{b['segno']}*\n"
+                h_b = "📈" if b['m_h'] > 1.05 else "📉" if b['m_h'] < 0.95 else "➖"
+                a_b = "📈" if b['m_a'] > 1.05 else "📉" if b['m_a'] < 0.95 else "➖"
+                msg += (f"🕒 {b['time']} - {b['match']}\n"
+                        f"🔥 Fiducia: {b['stars']} | Form: {h_b} vs {a_b}\n"
+                        f"📏 Delta Lineare: `{b['pp_diff']}`\n"
+                        f"💡 **SENTENZA: {b['pp_sentenza']}**\n"
+                        f"🎯 Segno: *{b['segno']}* ({round(max(b['p1'],b['px'],b['p2'])*100)}%)\n"
                         f"────────────────\n")
+            
             send_telegram_msg(msg)
+    else:
+        print("❌ Nessun match trovato.")
 
 if __name__ == "__main__":
     run_analysis()
