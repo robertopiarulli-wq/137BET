@@ -22,22 +22,18 @@ def send_telegram_msg(message):
 
 def calculate_ranking_logic(p1, px, p2, delta, sentenza):
     """
-    V18.5 - LOGICA TRASPARENTE (No Forcing)
-    Mostra il segno dominante di Poisson ma evidenzia la discrepanza con PP.
+    V18.6 - PURE POISSON SUM
+    Il Rank riporta la somma esatta delle probabilità Poisson senza pesi D.
     """
     probs = {"1": p1, "X": px, "2": p2}
     best_s = max(probs, key=probs.get)
     max_p = probs[best_s]
-    
-    # Forza del Delta (scala 0-1)
-    delta_power = min(abs(delta) / 15, 1.0)
 
-    # Caso Fissa Statistica (>60%)
+    # Caso FISSA (> 60% su un singolo segno)
     if max_p >= 0.60:
-        ranking_val = (max_p * 0.8) + (delta_power * 0.2)
-        return round(ranking_val * 100, 2), best_s
+        return round(max_p * 100, 2), best_s
 
-    # Caso Doppia (Basata su Poisson per non nascondere il contrasto con PP)
+    # Caso DOPPIA (Somma delle probabilità basata sul segno dominante di Poisson)
     if best_s == "1":
         r_sign, base_p = ("1X" if px > p2 else "12"), (p1 + max(px, p2))
     elif best_s == "X":
@@ -45,12 +41,11 @@ def calculate_ranking_logic(p1, px, p2, delta, sentenza):
     else:
         r_sign, base_p = ("X2" if px > p1 else "12"), (p2 + max(px, p1))
 
-    # Il ranking finale pesa per l'80% la probabilità e per il 20% la forza del Delta
-    ranking_val = (base_p * 0.8) + (delta_power * 0.2)
-    return round(min(ranking_val, 1.0) * 100, 2), r_sign
+    return round(base_p * 100, 2), r_sign
 
 def save_prediction_137bet(data):
     try:
+        # Calcolo del Ranking Pure Poisson V18.6
         rank_p, rank_s = calculate_ranking_logic(
             data['p1'], data['px'], data['p2'], data['pp_diff'], data['pp_sentenza']
         )
@@ -134,7 +129,7 @@ def get_full_analysis_v17(t_h, t_a):
     return np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1)), pauli_p, advice
 
 def run_analysis():
-    print("🚀 Avvio 137BET V18.5 - Transparent Ranking Edition...")
+    print("🚀 Avvio 137BET V18.6 - Pure Poisson Edition...")
     
     matches = supabase.table("matches").select("*").execute().data
     teams_data = supabase.table("teams").select("*").execute().data
@@ -181,14 +176,14 @@ def run_analysis():
             print(f"⚠️ Errore nel match {m.get('home_team_name')}: {e}")
 
     if results:
+        # Ordinamento Telegram per stelle
         final_list = sorted(results, key=lambda x: len(x['stars']), reverse=True)
-        header = "🏆 *137BET V18.5 - TRANSPARENT RANKING*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        header = "🏆 *137BET V18.6 - PURE POISSON*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         
         for i in range(0, len(final_list), 5):
             chunk = final_list[i:i + 5]
             msg = header + f"📦 *SENTENZE DEL WEEKEND ({(i//5) + 1})*\n\n"
             for b in chunk:
-                # Calcolo ranking al volo per Telegram
                 r_pow, r_sign = calculate_ranking_logic(b['p1'], b['px'], b['p2'], b['pp_diff'], b['pp_sentenza'])
                 
                 h_b = "📈" if b['m_h'] > 1.05 else "📉" if b['m_h'] < 0.95 else "➖"
@@ -201,8 +196,6 @@ def run_analysis():
                         f"────────────────\n")
             
             send_telegram_msg(msg)
-    else:
-        print("❌ Nessun match trovato.")
 
 if __name__ == "__main__":
     run_analysis()
