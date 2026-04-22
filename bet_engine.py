@@ -22,31 +22,44 @@ def send_telegram_msg(message):
 
 def calculate_ranking_logic(p1, px, p2, delta, sentenza):
     """
-    V18.9 PLATINUM - COORDINAMENTO PURO (No Peso D)
-    Il Rank è la SOMMA PURA delle probabilità Poisson coordinata con Parisi.
+    V18.9 Platinum - THE REASONER
+    Logica di coordinamento senza pesi esterni.
     """
-    if "X" in sentenza:
-        # Se la PP impone la X, la doppia è X + il miglior Poisson tra 1 e 2
-        if p2 > p1:
+    probs = {"1": p1, "X": px, "2": p2}
+    max_poisson_sign = max(probs, key=probs.get)
+    max_poisson_val = probs[max_poisson_sign]
+    sent = sentenza.upper()
+
+    # --- 1. FILTRO DI COERENZA (Poisson Schiacciante) ---
+    if max_poisson_val >= 0.60:
+        if max_poisson_sign == "1":
+            r_sign, base_p = "1X", (p1 + px)
+        elif max_poisson_sign == "2":
             r_sign, base_p = "X2", (px + p2)
         else:
-            r_sign, base_p = "1X", (px + p1)
-    elif "12" in sentenza:
+            r_sign, base_p = "X", px
+            
+    # --- 2. LOGICA COORDINATA (Poisson < 60%) ---
+    elif "1X" in sent:
+        r_sign, base_p = "1X", (p1 + px)
+    elif "X2" in sent:
+        r_sign, base_p = "X2", (px + p2)
+    elif "12" in sent:
         r_sign, base_p = "12", (p1 + p2)
-    elif "1" in sentenza and "FISSA" in sentenza:
+    elif "FISSA X" in sent:
+        # Regola G: Doppia abbinata alla percentuale maggiore Poisson
+        r_sign, base_p = ("X2", px + p2) if p2 > p1 else ("1X", px + p1)
+    elif "FISSA 1" in sent:
         r_sign, base_p = "1", p1
-    elif "2" in sentenza and "FISSA" in sentenza:
+    elif "FISSA 2" in sent:
         r_sign, base_p = "2", p2
     else:
-        # Fallback: Segno dominante Poisson
-        probs = {"1": p1, "X": px, "2": p2}
-        r_sign = max(probs, key=probs.get)
-        base_p = probs[r_sign]
+        r_sign, base_p = max_poisson_sign, max_poisson_val
 
     return round(base_p * 100, 2), r_sign
 
 def save_prediction_137bet(data):
-    """ Salva ogni run con timestamp per Backtest storico senza duplicati nel report """
+    """ Salvataggio con Timestamp per Backtest """
     try:
         supabase.table("prediction_history_137bet").insert({
             "match_name": data['match'], 
@@ -75,38 +88,34 @@ def get_pp_analysis(t_h, t_a):
         sigma = stats.get('s3', 1.0)
         return (p3 + (g3_f * 0.5) - (g3_s * (0.8 if is_home else 0.5))) / (1 + sigma)
     
-    i_h = calculate_intensity(t_h, True)
-    i_a = calculate_intensity(t_a, False)
+    i_h, i_a = calculate_intensity(t_h, True), calculate_intensity(t_a, False)
     delta = round(i_h - i_a, 2)
 
-    if delta > 8: sentenza = "🎯 FISSA 1"
-    elif delta < -8: sentenza = "🎯 FISSA 2"
-    elif 4 < delta <= 8 or -8 <= delta < -4: sentenza = "🔀 DOPPIA 12"
-    elif 2 < delta <= 4: sentenza = "🛡️ DOPPIA 1X"
-    elif -4 <= delta < -2: sentenza = "🛡️ DOPPIA X2"
-    else: sentenza = "🔒 FISSA X"
-    return delta, sentenza
+    if delta > 8: sent = "🎯 FISSA 1"
+    elif delta < -8: sent = "🎯 FISSA 2"
+    elif 4 < delta <= 8 or -8 <= delta < -4: sent = "🔀 DOPPIA 12"
+    elif 2 < delta <= 4: sent = "🛡️ DOPPIA 1X"
+    elif -4 <= delta < -2: sent = "🛡️ DOPPIA X2"
+    else: sent = "🔒 FISSA X"
+    return delta, sent
 
 def run_analysis():
     print("🚀 Esecuzione 137BET V18.9 Platinum...")
     matches = supabase.table("matches").select("*").execute().data
-    teams_data = supabase.table("teams").select("*").execute().data
-    stats_map = {t['team_name']: t for t in teams_data}
-    team_list = list(stats_map.keys())
-
+    teams = supabase.table("teams").select("*").execute().data
+    stats_map = {t['team_name']: t for t in teams}
+    
     results = []
-    now = datetime.now(timezone.utc)
-
     for m in matches:
         try:
-            h_res = process.extractOne(m['home_team_name'], team_list, score_cutoff=40)
-            a_res = process.extractOne(m['away_team_name'], team_list, score_cutoff=40)
-
+            h_res = process.extractOne(m['home_team_name'], list(stats_map.keys()), score_cutoff=35)
+            a_res = process.extractOne(m['away_team_name'], list(stats_map.keys()), score_cutoff=35)
+            
             if h_res and a_res:
                 t_h, t_a = stats_map[h_res[0]], stats_map[a_res[0]]
-                
-                # Poisson V18.9 - Medie Omogenee (Fix Barcellona)
                 m_h, m_a = get_momentum_weight(t_h['recent_form']), get_momentum_weight(t_a['recent_form'])
+                
+                # Poisson Omogeneo
                 lam_h = (t_h['avg_scored'] * t_a['avg_conceded']) * m_h * 1.10
                 lam_a = (t_a['avg_scored'] * t_h['avg_conceded']) * m_a
                 if t_a['avg_conceded'] < 1.05: lam_a = max(lam_a, 1.15)
@@ -125,12 +134,11 @@ def run_analysis():
                     "match": f"{m['home_team_name']} vs {m['away_team_name']}",
                     "time": m['match_date'], "p1": p1, "px": px, "p2": p2,
                     "pp_diff": delta, "pp_sentenza": sent, "rank_p": rank_val, "segno": rank_sign,
-                    "stars": "⭐" * min(5, max(1, int(max(p1, px, p2) * 10) - 2)),
-                    "m_h": m_h, "m_a": m_a
+                    "stars": "⭐" * min(5, max(1, int(max(p1, px, p2) * 10) - 2))
                 }
                 save_prediction_137bet(res)
                 results.append(res)
-        except Exception as e: print(f"⚠️ Errore match: {e}")
+        except Exception as e: print(f"⚠️ Errore: {e}")
 
     if results:
         # ORDINAMENTO DECISIVO PER RANK POWER
@@ -139,11 +147,11 @@ def run_analysis():
         
         for i in range(0, len(final_list), 5):
             chunk = final_list[i:i + 5]
-            msg = header + f"📦 *TOP RANKING ({i//5 + 1})*\n\n"
+            msg = header + f"📦 *TOP RANKING ({(i//5) + 1})*\n\n"
             for b in chunk:
                 msg += (f"🕒 {b['match']}\n"
                         f"📏 **Rank: {b['rank_p']}%** | {b['stars']}\n"
-                        f"💡 SENTENZA PP: `{b['pp_sentenza']}`\n"
+                        f"💡 PP: `{b['pp_sentenza']}`\n"
                         f"📊 DASHBOARD: *{b['segno']}*\n"
                         f"────────────────\n")
             send_telegram_msg(msg)
