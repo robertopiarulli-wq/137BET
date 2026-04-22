@@ -20,51 +20,56 @@ def send_telegram_msg(message):
         except Exception as e:
             print(f"⚠️ Errore invio Telegram: {e}")
 
-def calculate_ranking_logic(p1, px, p2, sentenza):
+def calculate_optimized_ranking(p1, px, p2, delta, sentenza):
     """
-    LOGICA RANKING DASHBOARD (V18.2)
-    - Se Poisson >= 60% -> FISSA
-    - Altrimenti -> DOPPIA (PP + Miglior segno restante)
+    RANKING OTTIMIZZATO V18.3 - QUANTUM COHERENCE
+    Bilancia Probabilità Poisson (Statistica) e Delta Parisi (Tattica)
     """
+    # 1. Normalizzazione Forza del Delta (scala 0-1 basata su 15 come max)
+    delta_power = min(abs(delta) / 15, 1.0)
+    
     probs = {"1": p1, "X": px, "2": p2}
     best_s = max(probs, key=probs.get)
     max_p = probs[best_s]
 
-    # REGOLA 1: FISSA STATISTICA (>= 60%)
+    # --- CASO A: FISSA STATISTICA (>= 60%) ---
     if max_p >= 0.60:
-        return round(max_p * 100, 2), best_s
+        # Bonus coerenza se la direzione PP conferma la probabilità Poisson
+        bonus_coerenza = 0.05 if (delta > 4 and best_s == "1") or (delta < -4 and best_s == "2") else 0
+        # Formula pesata: 75% Statistica, 20% Forza Delta, 5% Coerenza
+        ranking_val = (max_p * 0.75) + (delta_power * 0.20) + bonus_coerenza
+        return round(min(ranking_val, 1.0) * 100, 2), best_s
 
-    # REGOLA 2: DOPPIA DINAMICA (Basata su Sentenza PP)
+    # --- CASO B: DOPPIA DINAMICA (Sotto il 60%) ---
+    # Logica base G: PP + miglior segno restante
     if "12" in sentenza:
-        return round((p1 + p2) * 100, 2), "12"
+        base_prob = p1 + p2
+        r_sign = "12"
+    elif "X" in sentenza:
+        base_prob = px + max(p1, p2)
+        r_sign = "1X" if p1 > p2 else "X2"
+    elif "1" in sentenza:
+        base_prob = p1 + max(px, p2)
+        r_sign = "1X" if px > p2 else "12"
+    elif "2" in sentenza:
+        base_prob = p2 + max(p1, px)
+        r_sign = "X2" if px > p1 else "12"
+    else:
+        base_prob = max_p
+        r_sign = best_s
+
+    # Il ranking per le doppie viene validato per l'80% dalla probabilità 
+    # e per il 20% dalla grandezza del Delta Parisi
+    ranking_val = (base_prob * 0.80) + (delta_power * 0.20)
     
-    if "X" in sentenza:
-        # Se PP dice X, sommiamo il segno rimanente più alto (1 o 2)
-        if p1 > p2:
-            return round((px + p1) * 100, 2), "1X"
-        else:
-            return round((px + p2) * 100, 2), "X2"
-            
-    if "1" in sentenza:
-        # Se PP dice 1 ma Poisson è < 60%, cerchiamo la miglior copertura
-        if px > p2:
-            return round((p1 + px) * 100, 2), "1X"
-        else:
-            return round((p1 + p2) * 100, 2), "12"
-
-    if "2" in sentenza:
-        # Se PP dice 2 ma Poisson è < 60%, cerchiamo la miglior copertura
-        if px > p1:
-            return round((p2 + px) * 100, 2), "X2"
-        else:
-            return round((p2 + p1) * 100, 2), "12"
-
-    return round(max_p * 100, 2), best_s
+    return round(min(ranking_val, 1.0) * 100, 2), r_sign
 
 def save_prediction_137bet(data):
     try:
-        # Calcoliamo i valori per il Ranking prima del salvataggio
-        rank_p, rank_s = calculate_ranking_logic(data['p1'], data['px'], data['p2'], data['pp_sentenza'])
+        # Calcolo del Ranking Ottimizzato V18.3
+        rank_p, rank_s = calculate_optimized_ranking(
+            data['p1'], data['px'], data['p2'], data['pp_diff'], data['pp_sentenza']
+        )
         
         supabase.table("prediction_history_137bet").insert({
             "match_name": data['match'], 
@@ -79,8 +84,8 @@ def save_prediction_137bet(data):
             "stars": data['stars'], 
             "home_momentum": data['m_h'], 
             "away_momentum": data['m_a'],
-            "ranking_power": rank_p,  # Nuova Colonna Ranking
-            "ranking_sign": rank_s    # Nuova Colonna Segno Ranking
+            "ranking_power": rank_p,  
+            "ranking_sign": rank_s    
         }).execute()
     except Exception as e: 
         print(f"⚠️ Errore DB: {e}")
@@ -111,6 +116,7 @@ def get_pp_analysis(t_h, t_a):
     i_a = calculate_intensity(t_a, False)
     delta = round(i_h - i_a, 2)
 
+    # Logica Distanza Lineare Pura G
     if delta > 8: sentenza = "🎯 FISSA 1"
     elif delta < -8: sentenza = "🎯 FISSA 2"
     elif 4 < delta <= 8 or -8 <= delta < -4: sentenza = "🔀 DOPPIA 12"
@@ -145,7 +151,7 @@ def get_full_analysis_v17(t_h, t_a):
     return np.sum(np.tril(probs, -1)), np.sum(np.diag(probs)), np.sum(np.triu(probs, 1)), pauli_p, advice
 
 def run_analysis():
-    print("🚀 Avvio 137BET V18.2 - Ranking & Linear Distance Edition...")
+    print("🚀 Avvio 137BET V18.3 - Quantum Ranking Edition...")
     
     matches = supabase.table("matches").select("*").execute().data
     teams_data = supabase.table("teams").select("*").execute().data
@@ -193,22 +199,22 @@ def run_analysis():
 
     if results:
         final_list = sorted(results, key=lambda x: len(x['stars']), reverse=True)
-        header = "🏆 *137BET V18.2 - RANKING SYSTEM*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        header = "🏆 *137BET V18.3 - QUANTUM RANKING*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         
         for i in range(0, len(final_list), 5):
             chunk = final_list[i:i + 5]
             msg = header + f"📦 *SENTENZE DEL WEEKEND ({(i//5) + 1})*\n\n"
             for b in chunk:
-                # Recuperiamo al volo il segno ranking per il messaggio Telegram
-                _, r_sign = calculate_ranking_logic(b['p1'], b['px'], b['p2'], b['pp_sentenza'])
+                # Calcolo ranking al volo per il display Telegram
+                r_pow, r_sign = calculate_optimized_ranking(b['p1'], b['px'], b['p2'], b['pp_diff'], b['pp_sentenza'])
                 
                 h_b = "📈" if b['m_h'] > 1.05 else "📉" if b['m_h'] < 0.95 else "➖"
                 a_b = "📈" if b['m_a'] > 1.05 else "📉" if b['m_a'] < 0.95 else "➖"
                 msg += (f"🕒 {b['time']} - {b['match']}\n"
                         f"🔥 Fiducia: {b['stars']} | Form: {h_b} vs {a_b}\n"
-                        f"📏 Delta PP: `{b['pp_diff']}`\n"
+                        f"📏 Delta PP: `{b['pp_diff']}` | **Rank: {r_pow}%**\n"
                         f"💡 **SENTENZA: {b['pp_sentenza']}**\n"
-                        f"📊 Ranking: *{r_sign}* | Segno: *{b['segno']}*\n"
+                        f"📊 In Dashboard: *{r_sign}*\n"
                         f"────────────────\n")
             
             send_telegram_msg(msg)
